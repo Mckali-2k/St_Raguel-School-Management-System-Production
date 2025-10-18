@@ -2,7 +2,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Request, Response } from 'express';
 import fetch from 'node-fetch';
-import FormData from 'form-data';
 import { AuthenticatedRequest } from '../types';
 import blogService from '../services/blogService';
 import eventService from '../services/eventService';
@@ -38,9 +37,25 @@ export class ContentController {
           return;
         } else {
           console.warn('Hygraph upload failed:', hygraphResult.error);
+          // If it's a file size error, return it directly
+          if (hygraphResult.error?.includes('File too large')) {
+            res.status(400).json({
+              success: false,
+              message: hygraphResult.error
+            });
+            return;
+          }
         }
       } catch (hygraphError) {
         console.warn('Hygraph service error:', hygraphError);
+        // If it's a file size error, return it directly
+        if (hygraphError instanceof Error && hygraphError.message.includes('File too large')) {
+          res.status(400).json({
+            success: false,
+            message: hygraphError.message
+          });
+          return;
+        }
       }
 
       // Fallback: Use data URL for small files

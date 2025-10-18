@@ -53,6 +53,11 @@ export const UsersList: React.FC<UsersListProps> = ({ readOnly }) => {
   const [editOpen, setEditOpen] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<{
+    type: 'deactivate' | 'activate';
+    user: User | null;
+  }>({ type: 'deactivate', user: null });
 
   useEffect(() => {
     fetchUsers();
@@ -65,8 +70,10 @@ export const UsersList: React.FC<UsersListProps> = ({ readOnly }) => {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const usersData = await userService.getUsers(1000);
-      setUsers(usersData);
+      // Include inactive users, but only keep inactive admins visible for reactivation
+      const usersData = await userService.getUsersIncludingInactive(1000);
+      const visibleUsers = usersData.filter(u => u.isActive !== false || u.role === 'admin');
+      setUsers(visibleUsers);
     } catch (error) {
       console.error('Error fetching users:', error);
     } finally {
@@ -117,6 +124,26 @@ export const UsersList: React.FC<UsersListProps> = ({ readOnly }) => {
 
   const getInitials = (name: string) => {
     return name?.split(' ').map(n => n[0]).join('').toUpperCase() || '?';
+  };
+
+  const handleConfirmAction = async () => {
+    if (!confirmAction.user) return;
+    
+    try {
+      await userService.updateUser(confirmAction.user.id, { 
+        isActive: confirmAction.type === 'activate' 
+      });
+      setConfirmDialogOpen(false);
+      setConfirmAction({ type: 'deactivate', user: null });
+      fetchUsers();
+    } catch (error) {
+      console.error(`Error ${confirmAction.type}ing user:`, error);
+    }
+  };
+
+  const openConfirmDialog = (type: 'deactivate' | 'activate', user: User) => {
+    setConfirmAction({ type, user });
+    setConfirmDialogOpen(true);
   };
 
   if (loading) {
@@ -221,7 +248,11 @@ export const UsersList: React.FC<UsersListProps> = ({ readOnly }) => {
       {/* Users Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredUsers.map((user) => (
-          <Card key={user.id} className="hover:shadow-lg transition-all duration-300 border-gray-200 hover:border-blue-300">
+          <Card key={user.id} className={`hover:shadow-lg transition-all duration-300 ${
+            user.isActive 
+              ? 'border-gray-200 hover:border-blue-300' 
+              : 'border-red-200 bg-red-50 hover:border-red-400'
+          }`}>
             <CardContent className="p-6">
               <div className="flex items-start gap-4">
                 {/* Avatar */}
@@ -269,23 +300,29 @@ export const UsersList: React.FC<UsersListProps> = ({ readOnly }) => {
                   {/* Created Date */}
                   <div className="mt-3 text-xs text-gray-500">
                     Joined: {user.createdAt?.toDate?.()?.toLocaleDateString() || 'Unknown'}
+                    {!user.isActive && user.role === 'admin' && (
+                      <div className="mt-1 text-xs text-red-600 font-medium">
+                        ⚠️ This admin is currently deactivated
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
               {/* Admin actions for super_admin */}
               {userProfile?.role === 'super_admin' && user.role === 'admin' && (
                 <div className="mt-4 flex items-center gap-2">
-                  <Button size="sm" variant="outline" onClick={() => { setEditUser(user); setEditOpen(true); }}>Edit</Button>
-                  <Button size="sm" variant="destructive" onClick={async ()=>{
-                    if (!confirm(`Deactivate admin ${user.displayName}?`)) return;
-                    try {
-                      await userService.updateUser(user.id, { isActive: false });
-                      const usersData = await userService.getUsers(1000);
-                      setUsers(usersData);
-                    } catch (e) {
-                      alert('Failed to deactivate admin');
-                    }
-                  }}>Deactivate</Button>
+                  {user.isActive && (
+                    <Button size="sm" variant="outline" onClick={() => { setEditUser(user); setEditOpen(true); }}>Edit</Button>
+                  )}
+                  {user.isActive ? (
+                    <Button size="sm" variant="destructive" onClick={() => openConfirmDialog('deactivate', user)}>
+                      Deactivate
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="default" onClick={() => openConfirmDialog('activate', user)} className="bg-green-600 hover:bg-green-700">
+                      Reactivate
+                    </Button>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -428,6 +465,48 @@ export const UsersList: React.FC<UsersListProps> = ({ readOnly }) => {
                 setIsSaving(false);
               }
             }}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Custom Confirmation Dialog */}
+      <Dialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {confirmAction.type === 'deactivate' ? (
+                <UserX className="h-5 w-5 text-red-600" />
+              ) : (
+                <UserCheck className="h-5 w-5 text-green-600" />
+              )}
+              {confirmAction.type === 'deactivate' ? 'Deactivate User' : 'Activate User'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-gray-700">
+              Are you sure you want to {confirmAction.type} <strong>{confirmAction.user?.displayName}</strong>?
+            </p>
+            {confirmAction.type === 'deactivate' && (
+              <p className="text-sm text-gray-500 mt-2">
+                This will prevent the user from accessing the system.
+              </p>
+            )}
+            {confirmAction.type === 'activate' && (
+              <p className="text-sm text-gray-500 mt-2">
+                This will restore the user's access to the system.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              variant={confirmAction.type === 'deactivate' ? 'destructive' : 'default'}
+              onClick={handleConfirmAction}
+            >
+              {confirmAction.type === 'deactivate' ? 'Deactivate' : 'Activate'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -1,14 +1,12 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { submissionService, assignmentService, enrollmentService, courseService, gradeService, examService, examAttemptService, otherGradeService, userService, FirestoreGrade, FirestoreExam, FirestoreExamAttempt, FirestoreOtherGrade } from '@/lib/firestore';
+import { submissionService, assignmentService, enrollmentService, courseService, gradeService, examService, examAttemptService, otherGradeService, userService, settingsService, FirestoreGrade, FirestoreExam, FirestoreExamAttempt, FirestoreOtherGrade } from '@/lib/firestore';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { 
   Award, 
@@ -29,6 +27,7 @@ import {
 } from 'lucide-react';
 import DashboardHero from '@/components/DashboardHero';
 import { useI18n } from '@/contexts/I18nContext';
+import { toEthiopianDate } from '@/lib/ethiopianCalendar';
 import LoadingSpinner from '@/components/LoadingSpinner';
 
 interface GradeWithDetails {
@@ -91,26 +90,9 @@ export default function AdminStudentGrades() {
   const [otherGrades, setOtherGrades] = useState<FirestoreOtherGrade[]>([]);
   const [courses, setCourses] = useState<any[]>([]);
   const [expandedCourses, setExpandedCourses] = useState<{ [key: string]: boolean }>({});
-  const [gradeCalculationDialogOpen, setGradeCalculationDialogOpen] = useState(false);
-  const [gradeCalculationMethod, setGradeCalculationMethod] = useState<'weighted_average' | 'simple_average' | 'manual'>('weighted_average');
-  const [manualGrade, setManualGrade] = useState<number>(0);
   const [selectedCourseForGrade, setSelectedCourseForGrade] = useState<string>('');
-  const [gradeRangesDialogOpen, setGradeRangesDialogOpen] = useState(false);
-  const [gradeRanges, setGradeRanges] = useState({
-    'A+': { min: 97, max: 100, points: 4.0 },
-    'A': { min: 93, max: 96, points: 4.0 },
-    'A-': { min: 90, max: 92, points: 3.7 },
-    'B+': { min: 87, max: 89, points: 3.3 },
-    'B': { min: 83, max: 86, points: 3.0 },
-    'B-': { min: 80, max: 82, points: 2.7 },
-    'C+': { min: 77, max: 79, points: 2.3 },
-    'C': { min: 73, max: 76, points: 2.0 },
-    'C-': { min: 70, max: 72, points: 1.7 },
-    'D+': { min: 67, max: 69, points: 1.3 },
-    'D': { min: 63, max: 66, points: 1.0 },
-    'D-': { min: 60, max: 62, points: 0.7 },
-    'F': { min: 0, max: 59, points: 0.0 }
-  });
+  const [gradeRanges, setGradeRanges] = useState<any>({});
+  const [isPublishing, setIsPublishing] = useState(false);
 
   useEffect(() => {
     if (studentId && (userProfile?.role === 'admin' || userProfile?.role === 'super_admin')) {
@@ -176,6 +158,13 @@ export default function AdminStudentGrades() {
       setFinalGrades(finalGradesData);
       // Keep only this student's other grades for clarity
       setOtherGrades(otherGradesData.filter(g => g.studentId === studentId));
+      try {
+        const ranges = await settingsService.getGradeRanges();
+        setGradeRanges(ranges);
+      } catch {}
+
+      // Automatically calculate final grades for all courses using assignments + exams + other grades
+      await calculateAllFinalGrades();
 
     } catch (error) {
       console.error('Error loading student data:', error);
@@ -435,10 +424,14 @@ export default function AdminStudentGrades() {
 
   // GPA Calculations (Semester, Yearly, Cumulative)
   const gpaStats = useMemo(() => {
-    // Helper to get semester (1 for Jan-Jun, 2 for Jul-Dec)
-    const getSemester = (date: Date) => {
-      const m = date.getMonth() + 1;
-      return m <= 6 ? 1 : 2;
+    // Helper to get semester based on Ethiopian calendar
+    const getSemester = (ethiopianMonth: number) => {
+      if (ethiopianMonth >= 1 && ethiopianMonth <= 5) {
+        return 1; // Semester 1
+      } else if (ethiopianMonth >= 6 && ethiopianMonth <= 12) {
+        return 2; // Semester 2
+      }
+      return null; // Pagume is not in a semester
     };
 
     const byYear: Record<string, { semesters: Record<number, { totalPoints: number; count: number }>; totalPoints: number; count: number }>
@@ -446,15 +439,19 @@ export default function AdminStudentGrades() {
 
     finalGrades.forEach((g) => {
       const d = g.calculatedAt.toDate();
-      const year = d.getFullYear().toString();
-      const sem = getSemester(d);
-      if (!byYear[year]) {
-        byYear[year] = { semesters: { 1: { totalPoints: 0, count: 0 }, 2: { totalPoints: 0, count: 0 } }, totalPoints: 0, count: 0 };
+      const ethiopianDate = toEthiopianDate(d);
+      const year = ethiopianDate.year.toString();
+      const sem = getSemester(ethiopianDate.month);
+
+      if (sem) {
+        if (!byYear[year]) {
+          byYear[year] = { semesters: { 1: { totalPoints: 0, count: 0 }, 2: { totalPoints: 0, count: 0 } }, totalPoints: 0, count: 0 };
+        }
+        byYear[year].semesters[sem].totalPoints += g.gradePoints;
+        byYear[year].semesters[sem].count += 1;
+        byYear[year].totalPoints += g.gradePoints;
+        byYear[year].count += 1;
       }
-      byYear[year].semesters[sem].totalPoints += g.gradePoints;
-      byYear[year].semesters[sem].count += 1;
-      byYear[year].totalPoints += g.gradePoints;
-      byYear[year].count += 1;
     });
 
     const byYearGPA: Record<string, { semester1GPA: number; semester2GPA: number; yearlyGPA: number }> = {};
@@ -476,9 +473,11 @@ export default function AdminStudentGrades() {
   }, [finalGrades]);
 
   const calculateLetterGradeWithRanges = (finalGrade: number): { letterGrade: string; gradePoints: number } => {
-    for (const [letter, range] of Object.entries(gradeRanges)) {
-      if (finalGrade >= range.min && finalGrade <= range.max) {
-        return { letterGrade: letter, gradePoints: range.points };
+    const sortedRanges = Object.entries(gradeRanges).sort(([, a], [, b]) => (b as any).min - (a as any).min);
+    for (const [letter, range] of sortedRanges) {
+      const r = range as any;
+      if (finalGrade >= r.min) {
+        return { letterGrade: letter, gradePoints: r.points };
       }
     }
     return { letterGrade: 'F', gradePoints: 0.0 };
@@ -494,78 +493,86 @@ export default function AdminStudentGrades() {
     }
   };
 
-  const handleCalculateFinalGrade = async () => {
-    if (!student || !selectedCourseForGrade) {
-      toast.error('Select a course');
-      return;
-    }
+  const calculateFinalGradeForCourse = async (courseId: string) => {
+    if (!student) return;
+
     try {
-      let finalGrade: number;
-      let letterGrade: string;
-      let gradePoints: number;
-      let assignmentGrades: { assignmentId: string; grade: number; weight: number }[] = [];
+      // Get assignment grades for this course
+      const courseAssignmentGrades = grades.filter(g => g.courseId === courseId);
+      const assignmentPoints = courseAssignmentGrades.reduce((sum, g) => sum + g.grade, 0);
+      const assignmentMax = courseAssignmentGrades.reduce((sum, g) => sum + g.maxScore, 0);
 
-      if (gradeCalculationMethod === 'manual') {
-        if (manualGrade < 0 || manualGrade > 100) {
-          toast.error('Grade must be between 0 and 100');
-          return;
-        }
-        const res = calculateLetterGradeWithRanges(manualGrade);
-        finalGrade = manualGrade;
-        letterGrade = res.letterGrade;
-        gradePoints = res.gradePoints;
-      } else {
-        const courseAssignmentGrades = grades
-          .filter(g => g.courseId === selectedCourseForGrade)
-          .map(g => ({ assignmentId: g.assignmentId, grade: g.grade, weight: 1 }));
+      // Get exam grades for this course
+      const courseExamGrades = examGrades.filter(g => g.courseId === courseId);
+      const examPoints = courseExamGrades.reduce((sum, g) => sum + g.grade, 0);
+      const examMax = courseExamGrades.reduce((sum, g) => sum + g.maxScore, 0);
 
-        if (courseAssignmentGrades.length === 0) {
-          toast.error('No graded assignments for this course');
-          return;
-        }
-        assignmentGrades = courseAssignmentGrades;
-        const res = await gradeService.calculateFinalGrade(
-          selectedCourseForGrade,
-          student.id!,
-          assignmentGrades,
-          gradeCalculationMethod
-        );
-        finalGrade = res.finalGrade;
-        letterGrade = res.letterGrade;
-        gradePoints = res.gradePoints;
+      // Get other grades for this course
+      const courseOtherGrades = otherGrades.filter(g => g.courseId === courseId && g.studentId === student.id);
+      const otherPoints = courseOtherGrades.reduce((sum, g) => sum + (g.points || 0), 0);
+
+      const finalGradeInPoints = assignmentPoints + examPoints + otherPoints;
+
+      const totalPossiblePoints = assignmentMax + examMax;
+      let finalGradeInPercentage = 0;
+      if (totalPossiblePoints > 0) {
+        finalGradeInPercentage = Math.round(((assignmentPoints + examPoints + otherPoints) / totalPossiblePoints) * 100);
       }
 
-      const existing = await gradeService.getGradeByStudentAndCourse(selectedCourseForGrade, student.id!);
+      const { letterGrade, gradePoints } = calculateLetterGradeWithRanges(finalGradeInPercentage);
+
+      // Check if grade already exists
+      const existing = await gradeService.getGradeByStudentAndCourse(courseId, student.id!);
+      
       const gradeData = {
-        finalGrade,
+        finalGrade: finalGradeInPoints,
         letterGrade,
         gradePoints,
         calculatedBy: userProfile?.id || (userProfile as any)?.uid || 'unknown',
-        calculationMethod: gradeCalculationMethod as any,
-        ...(assignmentGrades.length > 0 && { assignmentGrades })
-      };
+        calculationMethod: 'automatic_sum' as any,
+        assignmentsTotal: assignmentPoints,
+        assignmentsMax: assignmentMax,
+        examsTotal: examPoints,
+        examsMax: examMax,
+        otherTotal: otherPoints,
+        isPublished: false, // Default to not published
+        calculatedAt: new Date(),
+        updatedAt: new Date()
+      } as any;
 
       if (existing) {
         await gradeService.updateGrade(existing.id, gradeData);
-        toast.success('Final grade updated');
+        toast.success(`Final grade for course has been updated.`);
+        await refreshFinalGrades();
       } else {
         await gradeService.createGrade({
-          courseId: selectedCourseForGrade,
+          courseId: courseId,
           studentId: student.id!,
           ...gradeData
         } as any);
-        toast.success('Final grade calculated and saved');
+        toast.success(`Final grade for course has been created.`);
+        await refreshFinalGrades();
       }
-
-      await refreshFinalGrades();
-      setGradeCalculationDialogOpen(false);
-      setSelectedCourseForGrade('');
-      setManualGrade(0);
-    } catch (e) {
-      console.error('Error calculating final grade:', e);
-      toast.error('Failed to calculate final grade');
+    } catch (error) {
+      console.error(`Error calculating final grade for course ${courseId}:`, error);
     }
   };
+
+  const calculateAllFinalGrades = async () => {
+    if (!student || courses.length === 0) return;
+
+    try {
+      // Calculate final grades for all courses
+      await Promise.all(courses.map(course => calculateFinalGradeForCourse(course.id)));
+      
+      // Refresh the final grades display
+      await refreshFinalGrades();
+    } catch (error) {
+      console.error('Error calculating all final grades:', error);
+    }
+  };
+
+
 
   const getGradeColor = (grade: number, maxScore: number) => {
     const percentage = (grade / maxScore) * 100;
@@ -805,6 +812,7 @@ export default function AdminStudentGrades() {
                 Other Grades
               </Button>
             </div>
+            {/* Publish controls removed per requirements */}
           </div>
         </div>
 
@@ -834,10 +842,7 @@ export default function AdminStudentGrades() {
                 </div>
               </CardContent>
             </Card>
-            <div className="lg:col-span-3 flex items-center gap-2">
-              <Button size="sm" onClick={() => setGradeCalculationDialogOpen(true)}>Calculate Final Grade</Button>
-              <Button size="sm" variant="outline" onClick={() => setGradeRangesDialogOpen(true)}>Configure Grade Ranges</Button>
-            </div>
+            {/* Configure Grade Ranges button removed per requirements */}
           </div>
         )}
 
@@ -872,7 +877,7 @@ export default function AdminStudentGrades() {
                 {gradeType === 'courses' ? 'Average Final Grade' : gradeType === 'exams' ? 'Average Exam Grade' : 'Average Assignment Grade'}
               </span>
             </div>
-            <p className="text-3xl font-bold text-blue-900">{stats.averageGrade}%</p>
+            <p className="text-3xl font-bold text-blue-900">{stats.averageGrade}</p>
           </div>
           
           <div className="bg-green-50 rounded-xl p-6 border border-green-100">
@@ -1199,6 +1204,15 @@ export default function AdminStudentGrades() {
                                             </tr>
                                           ))}
                                         </tbody>
+                                        <tfoot>
+                                          <tr className="bg-gray-50 font-semibold">
+                                            <td className="py-3 px-4 text-gray-800">Total</td>
+                                            <td className="py-3 px-4 text-center">
+                                              +{entries.reduce((sum, og) => sum + (og.points || 0), 0)}
+                                            </td>
+                                            <td></td>
+                                          </tr>
+                                        </tfoot>
                                       </table>
                                     </div>
                                   </div>
@@ -1255,42 +1269,43 @@ export default function AdminStudentGrades() {
                                     <th className="text-left py-3 px-4 font-medium text-gray-700">Instructor</th>
                                     <th className="text-center py-3 px-4 font-medium text-gray-700">Final Grade</th>
                                     <th className="text-center py-3 px-4 font-medium text-gray-700">Letter Grade</th>
-                                    <th className="text-center py-3 px-4 font-medium text-gray-700">Grade Points</th>
                                     <th className="text-center py-3 px-4 font-medium text-gray-700">Method</th>
+                                    <th className="text-center py-3 px-4 font-medium text-gray-700">Status</th>
                                     <th className="text-center py-3 px-4 font-medium text-gray-700">Calculated</th>
                                     <th className="text-right py-3 px-4 font-medium text-gray-700">Actions</th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {yearGrades.map((grade) => {
-                                    const letterGrade = grade.finalGrade >= 90 ? 'A' : grade.finalGrade >= 80 ? 'B' : grade.finalGrade >= 70 ? 'C' : grade.finalGrade >= 60 ? 'D' : 'F';
+                                    // Use the configured grade ranges instead of hardcoded values
+                                    const { letterGrade } = calculateLetterGradeWithRanges(grade.finalGrade);
                                     return (
                                       <tr key={grade.id} className="border-b border-gray-100 hover:bg-gray-50">
                                         <td className="py-3 px-4 text-gray-800 font-medium">{grade.courseTitle}</td>
                                         <td className="py-3 px-4 text-gray-600">{grade.instructorName}</td>
                                         <td className="py-3 px-4 text-center">
-                                          <span className={`font-semibold ${getGradeColor(grade.finalGrade, 100)}`}>
-                                            {grade.finalGrade}%
+                                          <span className={`font-semibold ${getGradeColor(grade.finalGrade, grade.assignmentsMax + grade.examsMax)}`}>
+                                            {grade.finalGrade}
                                           </span>
                                         </td>
                                         <td className="py-3 px-4 text-center">
-                                          <Badge variant={letterGrade === 'A' ? 'default' : letterGrade === 'B' ? 'secondary' : letterGrade === 'C' ? 'outline' : 'destructive'}>
-                                            {letterGrade}
+                                          <Badge variant={letterGrade.startsWith('A') ? 'default' : letterGrade.startsWith('B') ? 'secondary' : letterGrade.startsWith('C') ? 'outline' : 'destructive'}>
+                                            {grade.letterGrade}
                                           </Badge>
                                         </td>
-                                        <td className="py-3 px-4 text-center text-gray-600">{grade.gradePoints}</td>
                                         <td className="py-3 px-4 text-center text-gray-600 capitalize text-sm">
                                           {grade.calculationMethod.replace('_', ' ')}
+                                        </td>
+                                        <td className="py-3 px-4 text-center">
+                                          <Badge variant={grade.isPublished ? 'default' : 'secondary'}>
+                                            {grade.isPublished ? 'Published' : 'Draft'}
+                                          </Badge>
                                         </td>
                                         <td className="py-3 px-4 text-center text-gray-600 text-sm">
                                           {grade.calculatedAt.toDate().toLocaleDateString()}
                                         </td>
                                         <td className="py-3 px-4 text-right">
-                                          <Button
-                                            size="sm"
-                                            variant="outline"
-                                            onClick={() => { setSelectedCourseForGrade(grade.courseId); setGradeCalculationDialogOpen(true); }}
-                                          >
+                                          <Button variant="outline" size="sm" onClick={() => calculateFinalGradeForCourse(grade.courseId)}>
                                             Recalculate
                                           </Button>
                                         </td>
@@ -1322,87 +1337,7 @@ export default function AdminStudentGrades() {
             )}
           </div>
         </div>
-
-        {/* Final Grade Calculation Dialog */}
-        <Dialog open={gradeCalculationDialogOpen} onOpenChange={setGradeCalculationDialogOpen}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Calculate Final Grade</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div>
-            <Label>Course</Label>
-            <Select value={selectedCourseForGrade} onValueChange={setSelectedCourseForGrade}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select a course" />
-              </SelectTrigger>
-              <SelectContent>
-                {courses.map(c => (
-                  <SelectItem key={c.id} value={c.id}>{c.title}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>Calculation Method</Label>
-            <Select value={gradeCalculationMethod} onValueChange={(v) => setGradeCalculationMethod(v as any)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="weighted_average">Weighted Average</SelectItem>
-                <SelectItem value="simple_average">Simple Average</SelectItem>
-                <SelectItem value="manual">Manual Entry</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          {gradeCalculationMethod === 'manual' && (
-            <div>
-              <Label htmlFor="manual-grade">Final Grade (0-100)</Label>
-              <Input id="manual-grade" type="number" min={0} max={100} value={manualGrade} onChange={(e) => setManualGrade(Number(e.target.value))} />
-            </div>
-          )}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setGradeCalculationDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleCalculateFinalGrade}> {gradeCalculationMethod === 'manual' ? 'Save Grade' : 'Calculate Grade'} </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-
-    {/* Grade Ranges Dialog */}
-    <Dialog open={gradeRangesDialogOpen} onOpenChange={setGradeRangesDialogOpen}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Configure Letter Grade Ranges</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 gap-4">
-            {Object.entries(gradeRanges).map(([letter, range]) => (
-              <div key={letter} className="flex items-center gap-4 p-3 border rounded-lg">
-                <div className="w-12 text-center font-semibold">{letter}</div>
-                <div className="flex items-center gap-2">
-                  <Label className="text-sm">Min:</Label>
-                  <Input type="number" min={0} max={100} value={range.min} onChange={(e) => setGradeRanges(prev => ({ ...prev, [letter]: { ...prev[letter as keyof typeof prev] as any, min: parseInt(e.target.value) || 0 } }))} className="w-20" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <Label className="text-sm">Max:</Label>
-                  <Input type="number" min={0} max={100} value={range.max} onChange={(e) => setGradeRanges(prev => ({ ...prev, [letter]: { ...prev[letter as keyof typeof prev] as any, max: parseInt(e.target.value) || 0 } }))} className="w-20" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <Label className="text-sm">Points:</Label>
-                  <Input type="number" step="0.1" min={0} max={4} value={range.points} onChange={(e) => setGradeRanges(prev => ({ ...prev, [letter]: { ...prev[letter as keyof typeof prev] as any, points: parseFloat(e.target.value) || 0 } }))} className="w-20" />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setGradeRangesDialogOpen(false)}>Cancel</Button>
-          <Button onClick={() => { toast.success('Grade ranges updated'); setGradeRangesDialogOpen(false); }}>Save Ranges</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    {/* Grade Ranges configuration dialog removed per requirements */}
     </div>
   );
 }
