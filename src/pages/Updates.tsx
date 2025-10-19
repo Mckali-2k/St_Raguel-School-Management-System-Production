@@ -11,6 +11,7 @@ import { Heart, Plus, Edit, Trash2 } from 'lucide-react';
 import { useI18n } from '@/contexts/I18nContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import SiteFooter from '@/components/SiteFooter';
 
 export default function Updates() {
   const { t } = useI18n();
@@ -373,6 +374,8 @@ export default function Updates() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <SiteFooter />
+
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { MapPin, Phone, Mail, Clock, Send, User, MessageSquare } from 'lucide-re
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { useI18n } from '@/contexts/I18nContext';
+import SiteFooter from '../SiteFooter';
 
 export default function ContactPage() {
   const { t } = useI18n();
@@ -150,11 +151,7 @@ export default function ContactPage() {
             <div className="space-y-8">
               <div className="bg-white rounded-xl shadow-lg overflow-hidden">
                 <div className="h-64 bg-gray-200 flex items-center justify-center">
-                  <div className="text-center text-gray-500">
-                    <MapPin className="h-12 w-12 mx-auto mb-4" />
-                    <p className="text-lg font-medium">{t('contact.map.title')}</p>
-                    <p className="text-sm">{t('contact.map.subtitle')}</p>
-                  </div>
+                  <iframe src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3940.335716797473!2d38.737273474775584!3d9.033108288925106!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x164b85fe8f43d46f%3A0xc0fc09305d08f9c2!2sSt%20Raguel%20church%20school!5e0!3m2!1sen!2set!4v1760704991147!5m2!1sen!2set" className='w-full h-full' loading="lazy"></iframe>
                 </div>
                 <div className="p-6">
                   <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('contact.visit.title')}</h3>
@@ -168,7 +165,7 @@ export default function ContactPage() {
               </div>
 
               <div className="bg-blue-50 rounded-xl p-6 border border-blue-200">
-                <h3 className="text-lg font-semibold text-blue-900 mb-4">Quick Contact</h3>
+                <h3 className="text-lg font-semibold text-blue-900 mb-4">{t('contact.quick.title')}</h3>
                 <div className="space-y-3">
                   <div className="flex items-center space-x-3">
                     <Phone className="h-5 w-5 text-blue-600" />
@@ -187,15 +184,12 @@ export default function ContactPage() {
                 </div>
               </div>
 
-              <div className="bg-white rounded-xl shadow-lg p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('contact.faq.title')}</h3>
-                <p className="text-gray-600 mb-4">{t('contact.faq.body')}</p>
-                <button className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors font-medium">{t('contact.faq.cta')}</button>
-              </div>
+            
             </div>
           </div>
         </div>
       </section>
+      <SiteFooter />
     </div>
   );
 }

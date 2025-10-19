@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { BookOpen, Users, Clock, Heart, Scroll, Church, User, GraduationCap } from 'lucide-react';
 import Header from '@/components/Header';
+import SiteFooter from '@/components/SiteFooter';
 
 const Academic: React.FC = () => {
   const departments = [
@@ -261,6 +262,8 @@ const Academic: React.FC = () => {
           </div>
         </div>
       </div>
+      <SiteFooter />
+
     </div>
   );
 };

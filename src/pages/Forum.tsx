@@ -6,6 +6,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useI18n } from '@/contexts/I18nContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { api, ForumThread as ApiThread } from '@/lib/api';
+import SiteFooter from '@/components/SiteFooter';
 
 const Forum = () => {
   const [threads, setThreads] = useState<Array<FirestoreForumThread | ApiThread>>([]);
@@ -346,6 +347,8 @@ const Forum = () => {
         cancelText={t('common.cancel')}
         variant="destructive"
       />
+      <SiteFooter />
+
     </div>
   );
 };

@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { toEthiopianDate, formatEthiopianDate, getEthiopianDaysInMonth, getEthiopianFirstWeekdayOffset, toGeezNumber } from '@/lib/ethiopianCalendar';
 import { EventsList } from '@/components/EventsList';
 import EthiopianHolidays from '@/components/EthiopianHolidays';
+import SiteFooter from '@/components/SiteFooter';
 
 const Calendar = () => {
   const [events, setEvents] = useState<FirestoreEvent[]>([]);
@@ -202,6 +203,8 @@ const Calendar = () => {
           )}
         </DialogContent>
       </Dialog>
+      <SiteFooter />
+
     </div>
   );
 };
