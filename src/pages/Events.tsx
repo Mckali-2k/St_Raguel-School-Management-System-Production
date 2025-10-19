@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import LoadingButton from '@/components/ui/loading-button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import DualDateInput from '@/components/ui/DualDateInput';
@@ -79,8 +80,9 @@ const EventsPage = () => {
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [createForm, setCreateForm] = useState<Partial<Event>>({ title: '', description: '', date: new Date(), time: '09:00', location: '', type: 'meeting', maxAttendees: 50, currentAttendees: 0, status: 'upcoming' });
+  const [createForm, setCreateForm] = useState<Partial<Event>>({ title: '', description: '', date: new Date(), time: '09:00', location: '', type: '', currentAttendees: 0, status: 'upcoming' });
   const [editForm, setEditForm] = useState<Partial<Event>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const totalEvents = events.length;
   const upcomingEvents = events.filter(e => {
@@ -172,14 +174,14 @@ const EventsPage = () => {
 
   const saveEdit = async () => {
     if (!selectedEvent) return;
-    
-    // Validation for required fields
-    if (!editForm.title || editForm.title.trim().length === 0) {
-      toast.error('Title is required');
-      return;
-    }
-    
+    setIsSubmitting(true);
     try {
+      // Validation for required fields
+      if (!editForm.title || editForm.title.trim().length === 0) {
+        toast.error('Title is required');
+        return;
+      }
+      
       const date = editForm.date || new Date();
       const timestampDate = date instanceof Date ? Timestamp.fromDate(date) : date;
 
@@ -197,10 +199,13 @@ const EventsPage = () => {
       fetchEvents();
     } catch (e) {
       console.error(e);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const submitCreate = async () => {
+    setIsSubmitting(true);
     try {
       // Validation for required fields
       if (!createForm.title || createForm.title.trim().length === 0) {
@@ -219,14 +224,18 @@ const EventsPage = () => {
         type: createForm.type || 'meeting',
         time: createForm.time || '',
         location: createForm.location || '',
-        maxAttendees: createForm.maxAttendees || 50,
+        maxAttendees: 0,
         currentAttendees: createForm.currentAttendees || 0,
         status: getEventStatus(date),
       });
+      // Reset form after successful creation
+      setCreateForm({ title: '', description: '', date: new Date(), time: '09:00', location: '', type: '', currentAttendees: 0, status: 'upcoming' });
       setIsCreateOpen(false);
       fetchEvents();
     } catch (e) {
       console.error(e);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -596,7 +605,7 @@ const EventsPage = () => {
                 <Input 
                   value={String(createForm.type || '')} 
                   onChange={(e) => setCreateForm({ ...createForm, type: e.target.value.slice(0, 50) } as any)}
-                  placeholder="e.g., meeting, conference, workshop"
+                  placeholder="meeting"
                   maxLength={50}
                 />
                 <p className="text-xs text-gray-500 mt-1">{(createForm.type || '').length}/50 characters</p>
@@ -623,9 +632,12 @@ const EventsPage = () => {
               />
               <p className="text-xs text-gray-500 mt-1">{(createForm.description || '').length}/1,000 characters</p>
             </div>
+
           </div>
           <DialogFooter>
-            <Button onClick={submitCreate} className="bg-purple-600 hover:bg-purple-700">{t('events.create')}</Button>
+            <LoadingButton onClick={submitCreate} className="bg-purple-600 hover:bg-purple-700" loading={isSubmitting} loadingText="Creating…">
+              {t('events.create')}
+            </LoadingButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -729,7 +741,9 @@ const EventsPage = () => {
             </div>
           </div>
           <DialogFooter>
-            <Button onClick={saveEdit} className="bg-purple-600 hover:bg-purple-700">{t('common.saveChanges')}</Button>
+            <LoadingButton onClick={saveEdit} className="bg-purple-600 hover:bg-purple-700" loading={isSubmitting} loadingText="Saving…">
+              {t('common.saveChanges')}
+            </LoadingButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>

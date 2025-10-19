@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { studentDataService, assignmentEditRequestService, assignmentService, courseService, submissionService } from '@/lib/firestore';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import LoadingButton from '@/components/ui/loading-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -102,6 +103,8 @@ export default function StudentSubmissions() {
   const [selectedAssignment, setSelectedAssignment] = useState<any>(null);
   const [submissionContent, setSubmissionContent] = useState('');
   const [submissionAttachments, setSubmissionAttachments] = useState<string[]>([]);
+  const [selectedEditFile, setSelectedEditFile] = useState<File | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   const [selectedSubmissionDetail, setSelectedSubmissionDetail] = useState<SubmissionWithDetails | null>(null);
   const [editRequestOpen, setEditRequestOpen] = useState(false);
@@ -199,6 +202,7 @@ export default function StudentSubmissions() {
   };
 
   const handleSubmitSubmission = async () => {
+    if (isSubmitting) return; // prevent double submits
     if (!selectedAssignment || !submissionContent.trim()) {
       toast.error(t('student.submissions.missingContent'));
       return;
@@ -217,17 +221,33 @@ export default function StudentSubmissions() {
 
 
     try {
+      setIsSubmitting(true);
       // Check if we're editing an existing submission (approved edit request)
       if (selectedSubmissionForEdit && selectedSubmissionForEdit.id) {
+        // If a new file is selected during edit, upload and override attachments
+        let newAttachments = submissionAttachments;
+        let newAssetIds: string[] = [];
+        if (selectedEditFile) {
+          const { uploadToHygraph } = await import('@/lib/hygraphUpload');
+          const uploadResult = await uploadToHygraph(selectedEditFile);
+          if (!uploadResult.success || !uploadResult.url) {
+            throw new Error(uploadResult.error || 'Upload failed');
+          }
+          newAttachments = [uploadResult.url];
+          if (uploadResult.id) {
+            newAssetIds = [uploadResult.id];
+          }
+        }
         // Update existing submission
         const updateData = {
           content: submissionContent,
-          attachments: submissionAttachments,
+          attachments: newAttachments,
+          attachmentAssetIds: newAssetIds,
           status: 'submitted' as const,
           updatedAt: new Date()
         };
 
-        console.log('Updating submission:', selectedSubmissionForEdit.id, updateData);
+        // Silent in production
 
         await submissionService.updateSubmission(selectedSubmissionForEdit.id, updateData);
         
@@ -261,7 +281,7 @@ export default function StudentSubmissions() {
           updatedAt: new Date()
         };
 
-        console.log('Creating new submission:', submissionData);
+        // Silent in production
 
         await submissionService.createSubmission(submissionData);
         toast.success(t('student.submissions.submitted'));
@@ -272,11 +292,14 @@ export default function StudentSubmissions() {
       setSelectedSubmissionForEdit(null);
       setSubmissionContent('');
       setSubmissionAttachments([]);
+      setSelectedEditFile(null);
       studentDataService.clearStudentCache(currentUser!.uid);
       loadSubmissions();
     } catch (error) {
       console.error('Error submitting assignment:', error);
       toast.error(t('student.submissions.submitError'));
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -854,6 +877,11 @@ export default function StudentSubmissions() {
                     <div className="mt-2 border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
                       <Upload className="mx-auto h-12 w-12 text-gray-400" />
                       <p className="mt-2 text-sm text-gray-600">{t('student.submissions.dialog.attachmentNote')}</p>
+                      <input type="file" id="edit-file-upload" className="hidden" onChange={(e)=> setSelectedEditFile(e.target.files?.[0] || null)} />
+                      <label htmlFor="edit-file-upload" className="inline-flex items-center mt-3 px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 cursor-pointer">Choose File</label>
+                      {selectedEditFile && (
+                        <div className="mt-2 text-xs text-blue-800">Selected: {selectedEditFile.name}</div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -863,15 +891,16 @@ export default function StudentSubmissions() {
                 <Button variant="outline" onClick={() => setShowSubmissionDialog(false)}>
                   {t('common.cancel')}
                 </Button>
-                <Button 
+                <LoadingButton 
                   onClick={handleSubmitSubmission} 
+                  loading={isSubmitting}
+                  loadingText={selectedEditFile ? 'Uploading...' : (selectedSubmissionForEdit && selectedSubmissionForEdit.id ? 'Updating...' : 'Submitting...')}
                   disabled={!submissionContent.trim() || (selectedAssignment && new Date() > (selectedAssignment.dueDate instanceof Date ? selectedAssignment.dueDate : selectedAssignment.dueDate.toDate()))}
                 >
                   {selectedSubmissionForEdit && selectedSubmissionForEdit.id 
                     ? 'Update Submission' 
-                    : t('student.submissions.dialog.submit')
-                  }
-                </Button>
+                    : t('student.submissions.dialog.submit')}
+                </LoadingButton>
               </DialogFooter>
             </DialogContent>
           </Dialog>

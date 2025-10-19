@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { studentDataService, courseMaterialService, submissionService, FirestoreAssignment } from '@/lib/firestore';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import LoadingButton from '@/components/ui/loading-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -62,8 +63,20 @@ export default function StudentAssignments() {
 
   useEffect(() => {
     if (currentUser?.uid && userProfile?.role === 'student') {
+      try { studentDataService.clearStudentCache(currentUser.uid); } catch {}
       loadAssignments();
     }
+  }, [currentUser?.uid, userProfile?.role]);
+
+  // Refresh assignments after login navigation without full page reload
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && currentUser?.uid && userProfile?.role === 'student') {
+        loadAssignments();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [currentUser?.uid, userProfile?.role]);
 
   useEffect(() => {
@@ -81,7 +94,7 @@ export default function StudentAssignments() {
   useEffect(() => {
     // Load resources when assignment is selected
     if (selectedAssignment) {
-      loadAssignmentResources(selectedAssignment.courseId);
+      loadAssignmentResources(selectedAssignment.id, selectedAssignment.courseId);
     }
   }, [selectedAssignment]);
 
@@ -91,20 +104,52 @@ export default function StudentAssignments() {
     setSelectedFile(null);
   }, [selectedAssignment]);
 
-  const loadAssignmentResources = async (courseId: string) => {
+  const loadAssignmentResources = async (assignmentId: string, courseId: string) => {
     try {
-      // For now, we'll show course materials related to assignments
-      // In a real system, you might have assignment-specific resources
+      let resources: any[] = [];
+
+      // First, check for assignment-specific attachments
+      if (selectedAssignment?.attachments && Array.isArray(selectedAssignment.attachments) && selectedAssignment.attachments.length > 0) {
+        resources = selectedAssignment.attachments.map((att: any, idx: number) => ({
+          id: `${assignmentId}-attachment-${idx}`,
+          title: att.title || (att.type === 'file' ? `Attachment ${idx + 1}` : `Link ${idx + 1}`),
+          description: att.description || '',
+          type: att.type === 'file' ? 'document' : 'link',
+          fileUrl: att.type === 'file' ? att.url : undefined,
+          externalLink: att.type === 'link' ? att.url : undefined,
+        }));
+      }
+
+      // Also fetch course materials that might be related to this assignment
       const materials = await courseMaterialService.getCourseMaterialsByCourse(courseId);
-      // Filter materials that might be related to assignments (you can customize this logic)
-      const assignmentRelated = materials.filter(material => 
-        material.title.toLowerCase().includes('assignment') ||
-        material.description.toLowerCase().includes('assignment') ||
-        material.type === 'document'
-      );
-      setAssignmentResources(assignmentRelated);
+      const relatedMaterials = materials.filter((material: any) => {
+        // Check if material is tagged for this assignment
+        if (material.assignmentId && material.assignmentId === assignmentId) return true;
+        if (Array.isArray(material.tags) && material.tags.includes(assignmentId)) return true;
+        // Check if assignment title is mentioned in material title or description
+        if (selectedAssignment) {
+          const title = (material.title || '').toLowerCase();
+          const desc = (material.description || '').toLowerCase();
+          const aTitle = (selectedAssignment.title || '').toLowerCase();
+          if (title.includes(aTitle) || desc.includes(aTitle)) return true;
+        }
+        return false;
+      });
+
+      // Add related course materials to resources
+      const materialResources = relatedMaterials.map((material: any) => ({
+        id: material.id,
+        title: material.title,
+        description: material.description || '',
+        type: material.type,
+        fileUrl: material.fileUrl,
+        externalLink: material.externalLink,
+      }));
+
+      // Combine all resources
+      const allResources = [...resources, ...materialResources];
+      setAssignmentResources(allResources);
     } catch (error) {
-      console.error('Error loading assignment resources:', error);
       setAssignmentResources([]);
     }
   };
@@ -240,7 +285,7 @@ export default function StudentAssignments() {
 
     try {
       // Prepare submission data
-      let uploadedUrls: string[] = [];
+      const attachments: { type: 'file' | 'link'; url: string; title?: string; assetId?: string }[] = [];
       if (selectedFile) {
         setIsUploading(true);
         const uploadResult = await uploadToHygraph(selectedFile);
@@ -250,7 +295,12 @@ export default function StudentAssignments() {
         if (!uploadResult.url) {
           throw new Error('No URL returned from upload');
         }
-        uploadedUrls = [uploadResult.url];
+        attachments.push({
+          type: 'file',
+          url: uploadResult.url,
+          title: selectedFile.name,
+          assetId: uploadResult.id
+        });
         if (uploadResult.warning) {
           toast.warning(uploadResult.warning);
         }
@@ -266,7 +316,7 @@ export default function StudentAssignments() {
         studentName: userProfile.displayName || 'Unknown Student',
         studentEmail: userProfile.email || currentUser.email || '',
         content: submissionContent,
-        attachments: uploadedUrls,
+        attachments: attachments,
         status: 'submitted' as const,
         submittedAt: new Date(),
         isActive: true,
@@ -274,7 +324,6 @@ export default function StudentAssignments() {
         updatedAt: new Date()
       };
 
-      console.log('Submitting submission data:', submissionData);
 
       // Save to database
       await submissionService.createSubmission(submissionData);
@@ -425,13 +474,15 @@ export default function StudentAssignments() {
                     </div>
                   </div>
                   
-                  <button 
+                  <LoadingButton 
                     onClick={handleSubmitAssignment}
-                    className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
-                    disabled={isUploading}
+                    className="w-full"
+                    loading={isUploading}
+                    loadingText="Uploading…"
+                    disabled={false}
                   >
-                    {isUploading ? 'Uploading…' : 'Submit Assignment'}
-                  </button>
+                    Submit Assignment
+                  </LoadingButton>
                 </div>
               )}
             </div>
@@ -481,16 +532,6 @@ export default function StudentAssignments() {
               <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
                 <h3 className="font-semibold text-gray-800 mb-4">Resources</h3>
                 <div className="space-y-3">
-                  {selectedAssignment.instructions && (
-                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                      <FileText size={16} className="text-blue-600" />
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-gray-700">Assignment Instructions</p>
-                        <p className="text-xs text-gray-500">{selectedAssignment.instructions}</p>
-                      </div>
-                    </div>
-                  )}
-                  
                   {assignmentResources.length > 0 ? (
                     assignmentResources.map((resource) => (
                       <div key={resource.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">

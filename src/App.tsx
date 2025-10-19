@@ -1,4 +1,5 @@
 import { Toaster } from "@/components/ui/toaster";
+import "@/lib/silenceConsole";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -64,7 +65,10 @@ import SubmissionDetail from "./pages/SubmissionDetail";
 import AssignmentSubmissions from "./pages/AssignmentSubmissions";
 import TeacherAttendance from "./pages/TeacherAttendance";
 import AdminAttendance from "./pages/AdminAttendance";
+import AdminAttendanceDetails from "./pages/AdminAttendanceDetails";
 import ManageAdmins from "./pages/ManageAdmins";
+import AdminGrades from "./pages/AdminGrades";
+import AdminCourseGrades from "./pages/AdminCourseGrades";
 
 // import Catalog from "./pages/Catalog";
 
@@ -228,6 +232,36 @@ const App = () => (
                 <ProtectedRoute>
                   <DashboardWrapper>
                     <AdminAttendance />
+                  </DashboardWrapper>
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/dashboard/admin-grades" 
+              element={
+                <ProtectedRoute>
+                  <DashboardWrapper>
+                    <AdminGrades />
+                  </DashboardWrapper>
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/dashboard/admin-grades/course/:courseId" 
+              element={
+                <ProtectedRoute>
+                  <DashboardWrapper>
+                    <AdminCourseGrades />
+                  </DashboardWrapper>
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/dashboard/admin-attendance/:sheetId" 
+              element={
+                <ProtectedRoute>
+                  <DashboardWrapper>
+                    <AdminAttendanceDetails />
                   </DashboardWrapper>
                 </ProtectedRoute>
               } 

@@ -2,7 +2,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Request, Response } from 'express';
 import fetch from 'node-fetch';
-import FormData from 'form-data';
 import { AuthenticatedRequest } from '../types';
 import blogService from '../services/blogService';
 import eventService from '../services/eventService';
@@ -38,9 +37,25 @@ export class ContentController {
           return;
         } else {
           console.warn('Hygraph upload failed:', hygraphResult.error);
+          // If it's a file size error, return it directly
+          if (hygraphResult.error?.includes('File too large')) {
+            res.status(400).json({
+              success: false,
+              message: hygraphResult.error
+            });
+            return;
+          }
         }
       } catch (hygraphError) {
         console.warn('Hygraph service error:', hygraphError);
+        // If it's a file size error, return it directly
+        if (hygraphError instanceof Error && hygraphError.message.includes('File too large')) {
+          res.status(400).json({
+            success: false,
+            message: hygraphError.message
+          });
+          return;
+        }
       }
 
       // Fallback: Use data URL for small files
@@ -74,7 +89,36 @@ export class ContentController {
       });
     }
   }
-  async listBlog(req: AuthenticatedRequest, res: Response) {
+
+  async deleteAsset(req: Request, res: Response): Promise<void> {
+    try {
+      const { assetId } = req.body;
+      console.log('Delete asset request received for ID:', assetId);
+      
+      if (!assetId) {
+        res.status(400).json({ success: false, message: 'Asset ID is required' });
+        return;
+      }
+
+      const result = await hygraphService.deleteAsset(assetId);
+      
+      if (result) {
+        console.log('Asset deletion successful for ID:', assetId);
+        res.status(200).json({ success: true, message: 'Asset deleted successfully' });
+      } else {
+        console.error('Asset deletion failed for ID:', assetId);
+        res.status(404).json({ success: false, message: 'Asset not found or could not be deleted' });
+      }
+    } catch (error) {
+      console.error('Delete asset error:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: error instanceof Error ? error.message : 'An error occurred while deleting the asset'
+      });
+    }
+  }
+
+  async listBlog(req: AuthenticatedRequest, res: Response) {
     try {
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
