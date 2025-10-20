@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { studentDataService, courseMaterialService, submissionService, FirestoreAssignment } from '@/lib/firestore';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import LoadingButton from '@/components/ui/loading-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -105,31 +106,50 @@ export default function StudentAssignments() {
 
   const loadAssignmentResources = async (assignmentId: string, courseId: string) => {
     try {
-      // Prefer assignment-specific attachments first; otherwise fall back to course materials tagged for this assignment
-      const attachments = (selectedAssignment as any)?.attachments as Array<{ type: 'file' | 'link'; url: string; title?: string }> | undefined;
-      if (attachments && attachments.length > 0) {
-        setAssignmentResources(attachments.map((att, idx) => ({
-          id: `${assignmentId}-${idx}`,
-          title: att.title || (att.type === 'file' ? 'Attachment' : 'Link'),
-          description: '',
+      let resources: any[] = [];
+
+      // First, check for assignment-specific attachments
+      if (selectedAssignment?.attachments && Array.isArray(selectedAssignment.attachments) && selectedAssignment.attachments.length > 0) {
+        resources = selectedAssignment.attachments.map((att: any, idx: number) => ({
+          id: `${assignmentId}-attachment-${idx}`,
+          title: att.title || (att.type === 'file' ? `Attachment ${idx + 1}` : `Link ${idx + 1}`),
+          description: att.description || '',
           type: att.type === 'file' ? 'document' : 'link',
           fileUrl: att.type === 'file' ? att.url : undefined,
           externalLink: att.type === 'link' ? att.url : undefined,
-        })));
-        return;
+        }));
       }
 
-      // Fallback: fetch course materials and filter by explicit assignmentId tag if present
+      // Also fetch course materials that might be related to this assignment
       const materials = await courseMaterialService.getCourseMaterialsByCourse(courseId);
-      const related = materials.filter((material: any) => {
-        // Optional tagging support: material.assignmentId or material.tags includes assignmentId
+      const relatedMaterials = materials.filter((material: any) => {
+        // Check if material is tagged for this assignment
         if (material.assignmentId && material.assignmentId === assignmentId) return true;
         if (Array.isArray(material.tags) && material.tags.includes(assignmentId)) return true;
+        // Check if assignment title is mentioned in material title or description
+        if (selectedAssignment) {
+          const title = (material.title || '').toLowerCase();
+          const desc = (material.description || '').toLowerCase();
+          const aTitle = (selectedAssignment.title || '').toLowerCase();
+          if (title.includes(aTitle) || desc.includes(aTitle)) return true;
+        }
         return false;
       });
-      setAssignmentResources(related);
+
+      // Add related course materials to resources
+      const materialResources = relatedMaterials.map((material: any) => ({
+        id: material.id,
+        title: material.title,
+        description: material.description || '',
+        type: material.type,
+        fileUrl: material.fileUrl,
+        externalLink: material.externalLink,
+      }));
+
+      // Combine all resources
+      const allResources = [...resources, ...materialResources];
+      setAssignmentResources(allResources);
     } catch (error) {
-      console.error('Error loading assignment resources:', error);
       setAssignmentResources([]);
     }
   };
@@ -265,7 +285,7 @@ export default function StudentAssignments() {
 
     try {
       // Prepare submission data
-      let uploadedUrls: string[] = [];
+      const attachments: { type: 'file' | 'link'; url: string; title?: string; assetId?: string }[] = [];
       if (selectedFile) {
         setIsUploading(true);
         const uploadResult = await uploadToHygraph(selectedFile);
@@ -275,7 +295,12 @@ export default function StudentAssignments() {
         if (!uploadResult.url) {
           throw new Error('No URL returned from upload');
         }
-        uploadedUrls = [uploadResult.url];
+        attachments.push({
+          type: 'file',
+          url: uploadResult.url,
+          title: selectedFile.name,
+          assetId: uploadResult.id
+        });
         if (uploadResult.warning) {
           toast.warning(uploadResult.warning);
         }
@@ -291,7 +316,7 @@ export default function StudentAssignments() {
         studentName: userProfile.displayName || 'Unknown Student',
         studentEmail: userProfile.email || currentUser.email || '',
         content: submissionContent,
-        attachments: uploadedUrls,
+        attachments: attachments,
         status: 'submitted' as const,
         submittedAt: new Date(),
         isActive: true,
@@ -299,7 +324,6 @@ export default function StudentAssignments() {
         updatedAt: new Date()
       };
 
-      console.log('Submitting submission data:', submissionData);
 
       // Save to database
       await submissionService.createSubmission(submissionData);
@@ -450,13 +474,15 @@ export default function StudentAssignments() {
                     </div>
                   </div>
                   
-                  <button 
+                  <LoadingButton 
                     onClick={handleSubmitAssignment}
-                    className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
-                    disabled={isUploading}
+                    className="w-full"
+                    loading={isUploading}
+                    loadingText="Uploading…"
+                    disabled={false}
                   >
-                    {isUploading ? 'Uploading…' : 'Submit Assignment'}
-                  </button>
+                    Submit Assignment
+                  </LoadingButton>
                 </div>
               )}
             </div>

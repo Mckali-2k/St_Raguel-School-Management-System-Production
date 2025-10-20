@@ -9,7 +9,7 @@ import {
   createUserWithEmailAndPassword
 } from 'firebase/auth';
 import { auth } from '../lib/firebase';
-import { userService, FirestoreUser } from '../lib/firestore';
+import { userService, FirestoreUser, activityLogService } from '../lib/firestore';
 import { setAuthToken, removeAuthToken, api } from '@/lib/api';
 import { toast } from 'sonner';
 
@@ -60,10 +60,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         if (profile) {
           setUserProfile(profile);
         } else {
-          console.log('Profile not found, user may need to complete setup');
+          // Silent in production
         }
       } catch (error) {
-        console.log('Profile not found, user may need to complete setup');
+        // Silent in production
       }
       
       // Persist a short-lived ID token for backend requests in this session
@@ -71,8 +71,29 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         const token = await result.user.getIdToken();
         setAuthToken(token);
       } catch (error) {
-      console.warn('Failed to update user profile:', error);
-    }
+        // Silent in production
+      }
+      
+      // Trigger cleanup of old activity logs (runs once per day max)
+      try {
+        const lastCleanupKey = 'lastActivityLogCleanup';
+        const lastCleanup = localStorage.getItem(lastCleanupKey);
+        const today = new Date().toISOString().split('T')[0];
+        
+        if (lastCleanup !== today) {
+          // Run cleanup in background - don't await
+          activityLogService.cleanupOldLogs().then(deletedCount => {
+            if (deletedCount > 0) {
+              console.log(`Cleaned up ${deletedCount} old activity log entries`);
+            }
+            localStorage.setItem(lastCleanupKey, today);
+          }).catch(() => {
+            // Silent error handling for cleanup
+          });
+        }
+      } catch (error) {
+        // Silent error handling for cleanup check
+      }
 
       toast.success('Successfully logged in!');
       return result;
@@ -166,7 +187,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const suppressRedirect = sessionStorage.getItem('suppressAuthRedirect');
       
       if (suppressRedirect) {
-        console.log('Auth state change suppressed during user creation');
+        // Silent in production
         return;
       }
       
@@ -185,10 +206,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           if (profile) {
             setUserProfile(profile);
           } else {
-            console.log('Profile not found for user:', user.uid, 'or email:', user.email);
+            // Silent in production
           }
         } catch (error) {
-          console.log('Error fetching profile for user:', user.uid, error);
+          // Silent in production
         }
       } else {
         setUserProfile(null);

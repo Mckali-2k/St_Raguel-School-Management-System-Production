@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { submissionService, assignmentService, enrollmentService, courseService, gradeService, examService, examAttemptService, otherGradeService, FirestoreGrade, FirestoreExam, FirestoreExamAttempt, FirestoreOtherGrade } from '@/lib/firestore';
+import { calculateLetterGrade, loadGradeRanges } from '@/lib/gradeUtils';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -73,10 +74,12 @@ export default function StudentGrades() {
   const [gradeType, setGradeType] = useState<'assignments' | 'courses' | 'exams' | 'others'>('courses');
   const [courses, setCourses] = useState<any[]>([]);
   const [otherGrades, setOtherGrades] = useState<FirestoreOtherGrade[]>([]);
+  const [gradeRanges, setGradeRanges] = useState<any>(null);
 
   useEffect(() => {
     if (currentUser?.uid && userProfile?.role === 'student') {
       loadGrades();
+      loadGradeRanges().then(setGradeRanges);
     }
   }, [currentUser?.uid, userProfile?.role]);
 
@@ -124,36 +127,28 @@ export default function StudentGrades() {
       const assignmentsArrays = await Promise.all(assignmentsPromises);
       const allAssignments = assignmentsArrays.flat();
 
-      // Get graded submissions for all assignments
-      const submissionsPromises = allAssignments.map(async (assignment) => {
-        try {
-          const submissions = await submissionService.getSubmissionsByAssignment(assignment.id);
-          const studentSubmissions = submissions.filter(s => 
-            s.studentId === currentUser!.uid && s.status === 'graded' && s.grade !== undefined
-          );
-          
-          return studentSubmissions.map(submission => ({
-            id: submission.id,
-            assignmentId: submission.assignmentId,
-            assignmentTitle: assignment.title,
-            courseId: assignment.courseId,
-            courseTitle: assignment.courseTitle,
-            instructorName: assignment.instructorName,
-            submittedAt: submission.submittedAt.toDate(),
-            gradedAt: (submission as any).gradedAt?.toDate() || submission.submittedAt.toDate(),
-            grade: submission.grade || 0,
-            maxScore: assignment.maxScore,
-            feedback: submission.feedback || '',
-            status: 'graded' as const
-          }));
-        } catch (error) {
-          console.error(`Error loading submissions for assignment ${assignment.id}:`, error);
-          return [];
-        }
-      });
-
-      const submissionsArrays = await Promise.all(submissionsPromises);
-      const allGrades = submissionsArrays.flat();
+      // Get graded submissions for the current student in one request
+      const studentSubmissionsAll = await submissionService.getSubmissionsByStudent(currentUser!.uid);
+      const assignmentById = new Map(allAssignments.map(a => [a.id, a]));
+      const gradedSubmissions = studentSubmissionsAll.filter(s => s.status === 'graded' && s.grade !== undefined);
+      const allGrades = gradedSubmissions.map(submission => {
+        const assignment = assignmentById.get(submission.assignmentId);
+        if (!assignment) return null;
+        return {
+          id: submission.id,
+          assignmentId: submission.assignmentId,
+          assignmentTitle: assignment.title,
+          courseId: assignment.courseId,
+          courseTitle: (assignment as any).courseTitle,
+          instructorName: (assignment as any).instructorName,
+          submittedAt: submission.submittedAt.toDate(),
+          gradedAt: (submission as any).gradedAt?.toDate() || submission.submittedAt.toDate(),
+          grade: submission.grade || 0,
+          maxScore: assignment.maxScore,
+          feedback: submission.feedback || '',
+          status: 'graded' as const
+        } as const;
+      }).filter(Boolean) as any[];
       setGrades(allGrades);
 
       // Load exam grades for enrolled courses
@@ -227,7 +222,6 @@ export default function StudentGrades() {
         }
         return acc;
       }, {} as Record<string, FirestoreGrade>));
-      console.log('Final grades loaded:', uniqueFinalGrades);
       setFinalGrades(uniqueFinalGrades);
 
       // Load "other" grades for this student across courses
@@ -238,12 +232,12 @@ export default function StudentGrades() {
         const uniqueOtherGrades = Array.from(new Map(allOtherGrades.map(og => [og.id, og])).values());
         setOtherGrades(uniqueOtherGrades);
       } catch (e) {
-        console.error('Error loading other grades:', e);
+        // Silently ignore
         setOtherGrades([]);
       }
 
     } catch (error) {
-      console.error('Error loading grades:', error);
+      // Suppress console noise; UI shows error states via empties
     } finally {
       setLoading(false);
     }
@@ -372,12 +366,8 @@ export default function StudentGrades() {
   };
 
   const getGradeLetter = (grade: number, maxScore: number) => {
-    const percentage = (grade / maxScore) * 100;
-    if (percentage >= 90) return 'A';
-    if (percentage >= 80) return 'B';
-    if (percentage >= 70) return 'C';
-    if (percentage >= 60) return 'D';
-    return 'F';
+    const { letter } = calculateLetterGrade(grade, maxScore, gradeRanges);
+    return letter;
   };
 
   const getUniqueCourses = () => {
@@ -394,7 +384,6 @@ export default function StudentGrades() {
   const getStats = () => {
     if (gradeType === 'courses') {
       // Stats for final course grades
-      console.log('Calculating stats for courses, finalGrades:', finalGrades);
       if (finalGrades.length === 0) {
         return { averageGrade: 0, totalCourses: 0, highestGrade: 0, lowestGrade: 0 };
       }
@@ -834,36 +823,25 @@ export default function StudentGrades() {
                                     <th className="text-left py-3 px-4 font-medium text-gray-700">Instructor</th>
                                     <th className="text-center py-3 px-4 font-medium text-gray-700">Final Grade</th>
                                     <th className="text-center py-3 px-4 font-medium text-gray-700">Letter Grade</th>
-                                    <th className="text-center py-3 px-4 font-medium text-gray-700">Grade Points</th>
-                                    <th className="text-center py-3 px-4 font-medium text-gray-700">Method</th>
-                                    <th className="text-center py-3 px-4 font-medium text-gray-700">Status</th>
                                     <th className="text-center py-3 px-4 font-medium text-gray-700">Calculated</th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {yearGrades.map((grade) => {
-                                    const letterGrade = grade.finalGrade >= 90 ? 'A' : grade.finalGrade >= 80 ? 'B' : grade.finalGrade >= 70 ? 'C' : grade.finalGrade >= 60 ? 'D' : 'F';
+                                    const totalMax = (grade as any).assignmentsMax + (grade as any).examsMax;
+                                    const letterGrade = grade.letterGrade || '';
                                     return (
                                       <tr key={grade.id} className="border-b border-gray-100 hover:bg-gray-50">
                                         <td className="py-3 px-4 text-gray-800 font-medium">{grade.courseTitle}</td>
                                         <td className="py-3 px-4 text-gray-600">{grade.instructorName}</td>
                                         <td className="py-3 px-4 text-center">
-                                          <span className={`font-semibold ${getGradeColor(grade.finalGrade, 100)}`}>
-                                            {grade.finalGrade}%
+                                          <span className={`font-semibold ${getGradeColor(grade.finalGrade, totalMax > 0 ? totalMax : 100)}`}>
+                                            {grade.finalGrade}
                                           </span>
                                         </td>
                                         <td className="py-3 px-4 text-center">
                                           <Badge variant={letterGrade === 'A' ? 'default' : letterGrade === 'B' ? 'secondary' : letterGrade === 'C' ? 'outline' : 'destructive'}>
                                             {letterGrade}
-                                          </Badge>
-                                        </td>
-                                        <td className="py-3 px-4 text-center text-gray-600">{grade.gradePoints}</td>
-                                        <td className="py-3 px-4 text-center text-gray-600 capitalize text-sm">
-                                          {grade.calculationMethod.replace('_', ' ')}
-                                        </td>
-                                        <td className="py-3 px-4 text-center">
-                                          <Badge variant="default">
-                                            Published
                                           </Badge>
                                         </td>
                                         <td className="py-3 px-4 text-center text-gray-600 text-sm">

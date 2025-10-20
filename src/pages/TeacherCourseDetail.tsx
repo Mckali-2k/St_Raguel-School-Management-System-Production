@@ -12,6 +12,7 @@ import {
   examAttemptService,
   gradeService,
   otherGradeService,
+  settingsService,
   FirestoreCourse,
   FirestoreEnrollment,
   FirestoreAssignment,
@@ -22,10 +23,12 @@ import {
   FirestoreOtherGrade,
   studentDataService,
 } from '@/lib/firestore';
+import { calculateLetterGrade } from '@/lib/gradeUtils';
 import DashboardHero from '@/components/DashboardHero';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import LoadingButton from '@/components/ui/loading-button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -130,6 +133,11 @@ export default function TeacherCourseDetail() {
           const others = await otherGradeService.getByCourse(courseId);
           setOtherGrades(others);
         } catch {}
+        // Load grade ranges for consistent letter computation
+        try {
+          const ranges = await settingsService.getGradeRanges();
+          setGradeRanges(ranges);
+        } catch {}
         
         // Check lock status for all exams
         exs.forEach(exam => {
@@ -206,6 +214,9 @@ export default function TeacherCourseDetail() {
   const [examGrades, setExamGrades] = useState<any[]>([]);
   const [otherGrades, setOtherGrades] = useState<FirestoreOtherGrade[]>([]);
   const [gradeViewMode, setGradeViewMode] = useState<'assignments' | 'final' | 'exams' | 'others'>('assignments');
+  const [gradeRanges, setGradeRanges] = useState<any>({});
+  const [rangesOpen, setRangesOpen] = useState(false);
+  const [assignLoading, setAssignLoading] = useState(false);
   const [otherGradeDialogOpen, setOtherGradeDialogOpen] = useState(false);
   const [otherGradeTargetStudentId, setOtherGradeTargetStudentId] = useState<string | null>(null);
   const [otherGradeEditing, setOtherGradeEditing] = useState<FirestoreOtherGrade | null>(null);
@@ -218,7 +229,7 @@ export default function TeacherCourseDetail() {
 
   // Final grade calculation and grade ranges are handled by Admins in AdminStudentGrades
 
-  if (!userProfile || userProfile.role !== 'teacher') {
+  if (!userProfile || (userProfile.role !== 'teacher' && userProfile.role !== 'admin' && userProfile.role !== 'super_admin')) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-gray-600">Access denied</div>
@@ -582,6 +593,94 @@ export default function TeacherCourseDetail() {
                     </Select>
                   </div>
                   <div className="flex items-center gap-2">
+                    {(userProfile.role === 'admin' || userProfile.role === 'super_admin') && (
+                      <>
+                        <Button variant="outline" size="sm" onClick={() => setRangesOpen(true)}>
+                          Configure Grade Ranges
+                        </Button>
+                        <LoadingButton
+                          variant="outline"
+                          size="sm"
+                          loading={assignLoading}
+                          loadingText="Assigning…"
+                          onClick={async () => {
+                            if (!course) return;
+                            try {
+                              setAssignLoading(true);
+                              // Build totals per student (assignments, exams, others)
+                              const assignmentMap = new Map<string, { total: number; max: number }>();
+                              submissions
+                                .filter(s => s.status === 'graded' && typeof s.grade === 'number')
+                                .forEach(s => {
+                                  const prev = assignmentMap.get(s.studentId) || { total: 0, max: 0 };
+                                  const asg = assignments.find(a => a.id === s.assignmentId);
+                                  assignmentMap.set(s.studentId, {
+                                    total: prev.total + (s.grade || 0),
+                                    max: prev.max + ((asg as any)?.maxScore || 0),
+                                  });
+                                });
+
+                              const examMap = new Map<string, { total: number; max: number }>();
+                              examGrades.forEach(g => {
+                                const prev = examMap.get(g.studentId) || { total: 0, max: 0 };
+                                examMap.set(g.studentId, {
+                                  total: prev.total + (g.grade || 0),
+                                  max: prev.max + (g.maxScore || 0),
+                                });
+                              });
+
+                              const otherMap = new Map<string, number>();
+                              otherGrades.forEach(og => {
+                                const prev = otherMap.get(og.studentId) || 0;
+                                otherMap.set(og.studentId, prev + (og.points || 0));
+                              });
+
+                              // Iterate enrolled students
+                              for (const en of enrollments) {
+                                const a = assignmentMap.get(en.studentId) || { total: 0, max: 0 };
+                                const e = examMap.get(en.studentId) || { total: 0, max: 0 };
+                                const o = otherMap.get(en.studentId) || 0;
+                                const points = a.total + e.total + o;
+                                const cappedPoints = Math.min(points, 100);
+                                const comp = calculateLetterGrade(cappedPoints, 100, gradeRanges);
+                                const existing = await gradeService.getGradeByStudentAndCourse(course.id, en.studentId);
+                                const payload: any = {
+                                  finalGrade: Math.round(points),
+                                  letterGrade: comp.letter,
+                                  gradePoints: comp.points,
+                                  calculatedBy: userProfile?.id || (userProfile as any)?.uid || 'unknown',
+                                  calculationMethod: 'automatic_sum',
+                                  assignmentsTotal: Math.round(a.total),
+                                  assignmentsMax: a.max,
+                                  examsTotal: Math.round(e.total),
+                                  examsMax: e.max,
+                                  otherTotal: Math.round(o),
+                                  isPublished: existing?.isPublished ?? false,
+                                  updatedAt: new Date(),
+                                };
+                                if (existing) {
+                                  await gradeService.updateGrade(existing.id, payload);
+                                } else {
+                                  await gradeService.createGrade({ courseId: course.id, studentId: en.studentId, ...payload } as any);
+                                }
+                              }
+                              toast.success('Letters assigned for all students');
+                              // Refresh final grades
+                              try {
+                                const grades = await gradeService.getGradesByCourse(course.id);
+                                setFinalGrades(grades);
+                              } catch {}
+                            } catch (err) {
+                              toast.error('Failed to assign letters');
+                            } finally {
+                              setAssignLoading(false);
+                            }
+                          }}
+                        >
+                          Assign Letters
+                        </LoadingButton>
+                      </>
+                    )}
                     <Button variant="outline" size="sm" onClick={() => {
                       if (gradeViewMode === 'final') {
                         // export CSV for final grades
@@ -666,19 +765,35 @@ export default function TeacherCourseDetail() {
                     <div className="bg-white border rounded p-3">
                       <div className="text-sm font-medium mb-2">Grade distribution</div>
                       {(() => {
-                        const grades = finalGrades.map(g => g.finalGrade);
+                        // Use actual letter grades from the students
                         const dist = { A:0, B:0, C:0, D:0, F:0 } as Record<string, number>;
-                        grades.forEach(g => {
-                          if (g>=90) dist.A++; else if (g>=80) dist.B++; else if (g>=70) dist.C++; else if (g>=60) dist.D++; else dist.F++;
+                        
+                        // Get unique grades per student (latest only)
+                        const uniqueGrades = Object.values(finalGrades.reduce((acc, g) => {
+                          if (!acc[g.studentId] || acc[g.studentId].calculatedAt.toDate() < g.calculatedAt.toDate()) {
+                            acc[g.studentId] = g;
+                          }
+                          return acc;
+                        }, {} as Record<string, FirestoreGrade>));
+                        
+                        // Count actual letter grades
+                        uniqueGrades.forEach(g => {
+                          const letter = g.letterGrade?.[0] || 'F';
+                          if (letter in dist) {
+                            dist[letter]++;
+                          }
                         });
+                        
                         const items = Object.entries(dist);
+                        const totalStudents = uniqueGrades.length;
+                        
                         return (
                           <div className="grid grid-cols-5 gap-2">
                             {items.map(([k,v]) => (
                               <div key={k} className="text-center">
                                 <div className="text-xs text-gray-500 mb-1">{k}</div>
                                 <div className="h-16 bg-blue-100 rounded flex items-end justify-center">
-                                  <div className="w-full bg-blue-500 rounded-b" style={{ height: `${grades.length? (v/grades.length)*100 : 0}%` }} />
+                                  <div className="w-full bg-blue-500 rounded-b" style={{ height: `${totalStudents? (v/totalStudents)*100 : 0}%` }} />
                                 </div>
                                 <div className="text-xs mt-1">{v} students</div>
                               </div>
@@ -781,7 +896,6 @@ export default function TeacherCourseDetail() {
                             <th className="text-left px-4 py-2">Student</th>
                             <th className="text-left px-4 py-2">Final Grade</th>
                             <th className="text-left px-4 py-2">Letter Grade</th>
-                            <th className="text-left px-4 py-2">Grade Points</th>
                             <th className="text-left px-4 py-2">Method</th>
                             <th className="text-left px-4 py-2">Calculated</th>
                             <th className="text-left px-4 py-2"></th>
@@ -803,21 +917,23 @@ export default function TeacherCourseDetail() {
                                 case 'grade-asc': return a.finalGrade - b.finalGrade;
                               }
                             })
-                            .map(g => (
-                            <tr key={g.id}>
-                              <td className="px-4 py-2">{studentNames[g.studentId] || g.studentId}</td>
-                              <td className="px-4 py-2 font-semibold">{g.finalGrade}</td>
-                              <td className="px-4 py-2">
-                                <Badge variant={g.letterGrade.startsWith('A') ? 'default' : g.letterGrade.startsWith('B') ? 'secondary' : g.letterGrade.startsWith('C') ? 'outline' : 'destructive'}>
-                                  {g.letterGrade}
-                                </Badge>
-                              </td>
-                              <td className="px-4 py-2">{g.gradePoints}</td>
-                              <td className="px-4 py-2 capitalize text-xs">{g.calculationMethod.replace('_', ' ')}</td>
-                              <td className="px-4 py-2">{g.calculatedAt.toDate().toLocaleString()}</td>
-                              <td className="px-4 py-2 text-right"></td>
-                            </tr>
-                          ))}
+                            .map(g => {
+                              const letterToShow = g.letterGrade || '';
+                              return (
+                                <tr key={g.id}>
+                                  <td className="px-4 py-2">{studentNames[g.studentId] || g.studentId}</td>
+                                  <td className="px-4 py-2 font-semibold">{g.finalGrade}</td>
+                                  <td className="px-4 py-2">
+                                    <Badge variant={letterToShow.startsWith('A') ? 'default' : letterToShow.startsWith('B') ? 'secondary' : letterToShow.startsWith('C') ? 'outline' : 'destructive'}>
+                                      {letterToShow}
+                                    </Badge>
+                                  </td>
+                                  <td className="px-4 py-2 capitalize text-xs">{g.calculationMethod.replace('_', ' ')}</td>
+                                  <td className="px-4 py-2">{g.calculatedAt.toDate().toLocaleString()}</td>
+                                  <td className="px-4 py-2 text-right"></td>
+                                </tr>
+                              );
+                            })}
                         </tbody>
                       </table>
                     </div>
@@ -1036,6 +1152,7 @@ export default function TeacherCourseDetail() {
                 const payload: any = { title: materialForm.title, description: materialForm.description, courseId: course.id, type: materialForm.type };
                 if (materialForm.type === 'document') {
                   let url = materialForm.fileUrl || '';
+                  let assetId: string | undefined = undefined;
                   if (materialFile) {
                     setIsUploadingMaterial(true);
                     const uploadResult = await uploadToHygraph(materialFile);
@@ -1043,6 +1160,7 @@ export default function TeacherCourseDetail() {
                       throw new Error(uploadResult.error || 'Upload failed');
                     }
                     url = uploadResult.url || '';
+                    assetId = uploadResult.id;
                     if (!url) {
                       throw new Error('No URL returned from upload');
                     }
@@ -1051,6 +1169,9 @@ export default function TeacherCourseDetail() {
                     }
                   }
                   payload.fileUrl = url;
+                  if (assetId) {
+                    payload.fileAssetId = assetId;
+                  }
                 }
                 if (materialForm.type === 'video' || materialForm.type === 'link') payload.externalLink = materialForm.externalLink || '';
                 if (editingMaterial) {
@@ -1328,6 +1449,55 @@ export default function TeacherCourseDetail() {
       </DialogFooter>
     </DialogContent>
   </Dialog>
+
+      {/* Grade ranges configuration dialog for admins */}
+      <Dialog open={rangesOpen} onOpenChange={setRangesOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Configure Letter Grade Ranges</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-4">
+              {Object.entries(gradeRanges || {}).map(([letter, range]) => (
+                <div key={letter} className="flex items-center gap-4 p-3 border rounded-lg">
+                  <div className="w-12 text-center font-semibold">{letter}</div>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm">Min:</Label>
+                    <Input type="number" min={0} max={100} value={(range as any).min}
+                      onChange={(e) => setGradeRanges((prev: any) => ({ ...prev, [letter]: { ...(prev[letter] as any), min: parseInt(e.target.value) || 0 } }))}
+                      className="w-20" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm">Max:</Label>
+                    <Input type="number" min={0} max={100} value={(range as any).max}
+                      onChange={(e) => setGradeRanges((prev: any) => ({ ...prev, [letter]: { ...(prev[letter] as any), max: parseInt(e.target.value) || 0 } }))}
+                      className="w-20" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm">Points:</Label>
+                    <Input type="number" step={0.1} min={0} max={4} value={(range as any).points}
+                      onChange={(e) => setGradeRanges((prev: any) => ({ ...prev, [letter]: { ...(prev[letter] as any), points: parseFloat(e.target.value) || 0 } }))}
+                      className="w-20" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRangesOpen(false)}>Cancel</Button>
+            <Button onClick={async () => {
+              try {
+                await settingsService.setGradeRanges(gradeRanges);
+                toast.success('Grade ranges updated');
+              } catch {
+                toast.error('Failed to save grade ranges');
+              } finally {
+                setRangesOpen(false);
+              }
+            }}>Save Ranges</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Final grade calculation controls removed; handled by admins */}
     </div>

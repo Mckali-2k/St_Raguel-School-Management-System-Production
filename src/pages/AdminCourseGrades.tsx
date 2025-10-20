@@ -2,8 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { assignmentService, courseService, enrollmentService, examAttemptService, examService, gradeService, otherGradeService, submissionService, userService, settingsService } from '@/lib/firestore';
+import { calculateLetterGrade } from '@/lib/gradeUtils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import LoadingButton from '@/components/ui/loading-button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -37,6 +39,7 @@ export default function AdminCourseGrades() {
   const [gradeRanges, setGradeRanges] = useState<any>({});
   const [rangesOpen, setRangesOpen] = useState(false);
   const [recalcLoading, setRecalcLoading] = useState(false);
+  const [assignLoading, setAssignLoading] = useState(false);
 
   useEffect(() => {
     if (!courseId) return;
@@ -48,134 +51,146 @@ export default function AdminCourseGrades() {
   const loadAll = async () => {
     try {
       setLoading(true);
+      // Load course and grade ranges in parallel
       const [c, ranges] = await Promise.all([
         courseService.getCourseById(courseId!),
-        settingsService.getGradeRanges().catch(() => ({})),
+        settingsService.getGradeRanges().catch(() => ({
+          'A+': { min: 97, max: 100, points: 4.0 },
+          'A': { min: 93, max: 96, points: 4.0 },
+          'A-': { min: 90, max: 92, points: 3.7 },
+          'B+': { min: 87, max: 89, points: 3.3 },
+          'B': { min: 83, max: 86, points: 3.0 },
+          'B-': { min: 80, max: 82, points: 2.7 },
+          'C+': { min: 77, max: 79, points: 2.3 },
+          'C': { min: 73, max: 76, points: 2.0 },
+          'C-': { min: 70, max: 72, points: 1.7 },
+          'D+': { min: 67, max: 69, points: 1.3 },
+          'D': { min: 63, max: 66, points: 1.0 },
+          'D-': { min: 60, max: 62, points: 0.7 },
+          'F': { min: 0, max: 59, points: 0.0 },
+        })),
       ]);
       setCourse(c);
       setGradeRanges(ranges);
-      await loadRows();
+      // Load rows after setting course and ranges
+      await loadRows(ranges);
     } catch (e) {
-      console.error(e);
+      console.error('Error loading course data:', e);
+      toast.error('Failed to load course data');
     } finally {
       setLoading(false);
     }
   };
 
-  const computeLetter = (points: number, max: number): { letter: string; points: number } => {
-    const percent = max > 0 ? Math.round((points / max) * 100) : 0;
-
-    for (const [letter, range] of Object.entries(gradeRanges)) {
-      const r = range as any;
-      if (percent >= r.min && percent <= r.max) {
-        return { letter, points: r.points };
-      }
-    }
-
-    // If no range is found, check if it's because the percentage is over 100
-    if (percent > 100) {
-      const sortedRanges = Object.entries(gradeRanges).sort(([, a], [, b]) => (b as any).min - (a as any).min);
-      if (sortedRanges.length > 0) {
-        const highestGrade = sortedRanges[0];
-        return { letter: highestGrade[0], points: (highestGrade[1] as any).points };
-      }
-    }
-
-    return { letter: 'F', points: 0.0 };
-  };
-
   const loadRows = async () => {
     if (!courseId) return;
-    // Get enrolled students
-    const enrollments = await enrollmentService.getEnrollmentsByCourse(courseId);
-    const studentIds = Array.from(new Set(enrollments.map(e => e.studentId)));
+    
+    try {
+      // Get enrolled students
+      const enrollments = await enrollmentService.getEnrollmentsByCourse(courseId);
+      const studentIds = Array.from(new Set(enrollments.map(e => e.studentId)));
 
-    // Preload users
-    const users = await Promise.all(studentIds.map(id => userService.getUserById(id)));
-    const studentMap = new Map<string, any>();
-    users.forEach(u => { if (u) studentMap.set(u.id, u); });
-
-    // Load assignments and submissions once
-    const assignments = await assignmentService.getAssignmentsByCourse(courseId);
-    const submissionsByAssignment = await Promise.all(assignments.map(a => submissionService.getSubmissionsByAssignment(a.id)));
-
-    // Build assignment totals per student
-    const assignmentTotals = new Map<string, { total: number; max: number }>();
-    const assignmentsMaxTotal = assignments.reduce((sum, a: any) => sum + (a.maxScore || 0), 0);
-    submissionsByAssignment.flat().forEach(sub => {
-      if (sub.status === 'graded' && typeof sub.grade === 'number') {
-        const prev = assignmentTotals.get(sub.studentId) || { total: 0, max: 0 };
-        assignmentTotals.set(sub.studentId, { total: prev.total + sub.grade, max: prev.max + (assignments.find(a => a.id === sub.assignmentId)?.maxScore || 0) });
+      if (studentIds.length === 0) {
+        setRows([]);
+        return;
       }
-    });
 
-    // Load exams for course
-    const exams = await examService.getExamsByCourse(courseId);
-    // Compute exam totals per student
-    const examTotals = new Map<string, { total: number; max: number }>();
-    const allAttempts = (await Promise.all(exams.map(ex => examAttemptService.getAttemptsByExam(ex.id)))).flat();
+      // Load all data in parallel for better performance
+      const [users, assignments, exams, allOtherGrades, finalDocs] = await Promise.all([
+        Promise.all(studentIds.map(id => userService.getUserById(id))),
+        assignmentService.getAssignmentsByCourse(courseId),
+        examService.getExamsByCourse(courseId),
+        otherGradeService.getByCourse(courseId),
+        Promise.all(studentIds.map(sid => gradeService.getGradeByStudentAndCourse(courseId, sid)))
+      ]);
 
-    for (const attempt of allAttempts) {
-        if (studentIds.includes(attempt.studentId) && attempt.status === 'graded' && attempt.isGraded) {
-            const ex = exams.find(e => e.id === attempt.examId);
-            if (ex) {
-                const prev = examTotals.get(attempt.studentId) || { total: 0, max: 0 };
-                examTotals.set(attempt.studentId, { total: prev.total + (attempt.score || 0), max: prev.max + (ex.totalPoints || 0) });
-            }
+      // Create user map
+      const studentMap = new Map<string, any>();
+      users.forEach(u => { if (u) studentMap.set(u.id, u); });
+
+      // Load submissions and exam attempts in parallel
+      const [submissionsByAssignment, allAttempts] = await Promise.all([
+        Promise.all(assignments.map(a => submissionService.getSubmissionsByAssignment(a.id))),
+        Promise.all(exams.map(ex => examAttemptService.getAttemptsByExam(ex.id)))
+      ]);
+
+      // Build assignment totals per student
+      const assignmentTotals = new Map<string, { total: number; max: number }>();
+      submissionsByAssignment.flat().forEach(sub => {
+        if (sub.status === 'graded' && typeof sub.grade === 'number') {
+          const prev = assignmentTotals.get(sub.studentId) || { total: 0, max: 0 };
+          const assignment = assignments.find(a => a.id === sub.assignmentId);
+          assignmentTotals.set(sub.studentId, { 
+            total: prev.total + sub.grade, 
+            max: prev.max + (assignment?.maxScore || 0) 
+          });
         }
+      });
+
+      // Compute exam totals per student
+      const examTotals = new Map<string, { total: number; max: number }>();
+      allAttempts.flat().forEach(attempt => {
+        if (studentIds.includes(attempt.studentId) && attempt.status === 'graded' && attempt.isGraded) {
+          const ex = exams.find(e => e.id === attempt.examId);
+          if (ex) {
+            const prev = examTotals.get(attempt.studentId) || { total: 0, max: 0 };
+            examTotals.set(attempt.studentId, { 
+              total: prev.total + (attempt.score || 0), 
+              max: prev.max + (ex.totalPoints || 0) 
+            });
+          }
+        }
+      });
+
+      // Load other grades by student
+      const otherTotals = new Map<string, number>();
+      allOtherGrades.forEach(og => {
+        if (studentIds.includes(og.studentId)) {
+          const prev = otherTotals.get(og.studentId) || 0;
+          otherTotals.set(og.studentId, prev + (og.points || 0));
+        }
+      });
+
+      // Create final grades map
+      const finalByStudent = new Map<string, any>();
+      finalDocs.forEach(doc => { if (doc) finalByStudent.set(doc.studentId, doc); });
+
+      const newRows: StudentRow[] = studentIds.map(sid => {
+        const user = studentMap.get(sid);
+        const a = assignmentTotals.get(sid) || { total: 0, max: 0 };
+        const e = examTotals.get(sid) || { total: 0, max: 0 };
+        const o = otherTotals.get(sid) || 0;
+
+        const points = a.total + e.total + o;
+        const max = a.max + e.max;
+        // Percent should be calculated without 'other' points since they're bonus
+        const percent = max > 0 ? Math.round(((a.total + e.total) / max) * 100) : 0;
+
+        const letter = finalByStudent.get(sid)?.letterGrade || '';
+        const gradePoints = finalByStudent.get(sid)?.gradePoints ?? 0.0;
+
+        return {
+          studentId: sid,
+          name: user?.displayName || 'Unknown Student',
+          email: user?.email || '',
+          assignmentsTotal: Math.round(a.total),
+          assignmentsMax: a.max,
+          examsTotal: Math.round(e.total),
+          examsMax: e.max,
+          otherTotal: Math.round(o),
+          finalPoints: Math.round(points),
+          percent,
+          letterGrade: letter,
+          gradePoints,
+          isPublished: !!finalByStudent.get(sid)?.isPublished,
+        };
+      });
+
+      setRows(newRows);
+    } catch (error) {
+      // Avoid spamming console; show empty state only
+      setRows([]);
     }
-
-    // Load other grades by student
-    const otherTotals = new Map<string, number>();
-    const allOtherGrades = await otherGradeService.getByCourse(courseId);
-    for (const og of allOtherGrades) {
-      if (studentIds.includes(og.studentId)) {
-        const prev = otherTotals.get(og.studentId) || 0;
-        otherTotals.set(og.studentId, prev + (og.points || 0));
-      }
-    }
-
-    // Load final grades docs to determine publication status and letter grade if exists
-    const finalDocs = await Promise.all(studentIds.map(sid => gradeService.getGradeByStudentAndCourse(courseId, sid)));
-    const finalByStudent = new Map<string, any>();
-    finalDocs.forEach(doc => { if (doc) finalByStudent.set(doc.studentId, doc); });
-
-    const newRows: StudentRow[] = studentIds.map(sid => {
-      const user = studentMap.get(sid);
-      const a = assignmentTotals.get(sid) || { total: 0, max: 0 };
-      const e = examTotals.get(sid) || { total: 0, max: 0 };
-      const o = otherTotals.get(sid) || 0;
-
-      const points = a.total + e.total + o;
-      const max = a.max + e.max;
-      const percent = max > 0 ? Math.round(((a.total + e.total + o) / max) * 100) : 0;
-
-      let letter = finalByStudent.get(sid)?.letterGrade || 'F';
-      let gradePoints = finalByStudent.get(sid)?.gradePoints ?? 0.0;
-      if (!finalByStudent.get(sid)) {
-        const comp = computeLetter(points, max);
-        letter = comp.letter; gradePoints = comp.points;
-      }
-
-
-      return {
-        studentId: sid,
-        name: user?.displayName || 'Unknown Student',
-        email: user?.email || '',
-        assignmentsTotal: Math.round(a.total),
-        assignmentsMax: a.max,
-        examsTotal: Math.round(e.total),
-        examsMax: e.max,
-        otherTotal: Math.round(o),
-        finalPoints: Math.round(points),
-        percent,
-        letterGrade: letter,
-        gradePoints,
-        isPublished: !!finalByStudent.get(sid)?.isPublished,
-      };
-    });
-
-    setRows(newRows);
   };
 
   const recalcAll = async () => {
@@ -184,7 +199,9 @@ export default function AdminCourseGrades() {
     try {
       for (const r of rows) {
         // Recompute letter from percent using ranges
-        const comp = computeLetter(r.finalPoints, r.assignmentsMax + r.examsMax);
+        // Use default max of 100 if no assignments/exams to avoid division by zero
+        const points = Math.min(r.finalPoints, 100);
+        const comp = calculateLetterGrade(points, 100, gradeRanges);
         const existing = await gradeService.getGradeByStudentAndCourse(courseId, r.studentId);
         const payload: any = {
           finalGrade: r.finalPoints,
@@ -209,21 +226,81 @@ export default function AdminCourseGrades() {
       toast.success('Final grades recalculated');
       await loadRows();
     } catch (e) {
-      console.error(e);
       toast.error('Failed to recalculate');
     } finally {
       setRecalcLoading(false);
     }
   };
 
+  const assignLetters = async () => {
+    if (!courseId || rows.length === 0) return;
+    setAssignLoading(true);
+    try {
+      for (const r of rows) {
+        const points = Math.min(r.finalPoints, 100);
+        const comp = calculateLetterGrade(points, 100, gradeRanges);
+        const existing = await gradeService.getGradeByStudentAndCourse(courseId, r.studentId);
+        const payload: any = {
+          finalGrade: r.finalPoints,
+          letterGrade: comp.letter,
+          gradePoints: comp.points,
+          calculatedBy: userProfile?.id || (userProfile as any)?.uid || 'unknown',
+          calculationMethod: 'automatic_sum',
+          assignmentsTotal: r.assignmentsTotal,
+          assignmentsMax: r.assignmentsMax,
+          examsTotal: r.examsTotal,
+          examsMax: r.examsMax,
+          otherTotal: r.otherTotal,
+          isPublished: existing?.isPublished ?? false,
+          updatedAt: new Date(),
+        };
+        if (existing) {
+          await gradeService.updateGrade(existing.id, payload);
+        } else {
+          await gradeService.createGrade({ courseId, studentId: r.studentId, ...payload } as any);
+        }
+      }
+      toast.success('Letters assigned based on configured ranges');
+      await loadRows();
+    } catch (e) {
+      toast.error('Failed to assign letters');
+    } finally {
+      setAssignLoading(false);
+    }
+  };
+
   const publishAll = async () => {
     if (!courseId) return;
     try {
+      // Ensure letters are assigned based on current ranges before publishing
+      for (const r of rows) {
+        const points = Math.min(r.finalPoints, 100);
+        const comp = calculateLetterGrade(points, 100, gradeRanges);
+        const existing = await gradeService.getGradeByStudentAndCourse(courseId, r.studentId);
+        const payload: any = {
+          finalGrade: r.finalPoints,
+          letterGrade: comp.letter,
+          gradePoints: comp.points,
+          calculatedBy: userProfile?.id || (userProfile as any)?.uid || 'unknown',
+          calculationMethod: 'automatic_sum',
+          assignmentsTotal: r.assignmentsTotal,
+          assignmentsMax: r.assignmentsMax,
+          examsTotal: r.examsTotal,
+          examsMax: r.examsMax,
+          otherTotal: r.otherTotal,
+          updatedAt: new Date(),
+          isPublished: existing?.isPublished ?? false,
+        };
+        if (existing) {
+          await gradeService.updateGrade(existing.id, payload);
+        } else {
+          await gradeService.createGrade({ courseId, studentId: r.studentId, ...payload } as any);
+        }
+      }
       await gradeService.publishCourseGrades(courseId);
-      toast.success('Grades published for this course');
+      toast.success('Letters assigned and grades published');
       await loadRows();
     } catch (e) {
-      console.error(e);
       toast.error('Failed to publish');
     }
   };
@@ -254,10 +331,13 @@ export default function AdminCourseGrades() {
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => setRangesOpen(true)}>Configure Grade Ranges</Button>
-          <Button variant="outline" disabled={recalcLoading} onClick={recalcAll}>
+          <LoadingButton variant="outline" loading={recalcLoading} onClick={recalcAll} loadingText="Recalculating…">
             <RefreshCcw className="h-4 w-4 mr-1" /> Recalculate All
-          </Button>
-          <Button onClick={publishAll}>Publish Final Grades</Button>
+          </LoadingButton>
+          <LoadingButton variant="outline" loading={assignLoading} onClick={assignLetters} loadingText="Assigning…">
+            Assign Letters
+          </LoadingButton>
+          <LoadingButton onClick={publishAll} loading={false} loadingText="Publishing…">Publish Final Grades</LoadingButton>
         </div>
       </div>
 
@@ -279,8 +359,21 @@ export default function AdminCourseGrades() {
                   <th className="text-center py-2 px-3">Status</th>
                 </tr>
               </thead>
-              <tbody>
-                {rows.map(r => (
+              <tbody>{loading ? (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                      <span className="text-gray-500">Loading student grades...</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : rows.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-6 text-center text-gray-500">No enrolled students found.</td>
+                </tr>
+              ) : (
+                rows.map(r => (
                   <tr key={r.studentId} className="border-b hover:bg-gray-50">
                     <td className="py-2 px-3">
                       <div className="font-medium text-gray-900">{r.name}</div>
@@ -290,20 +383,15 @@ export default function AdminCourseGrades() {
                     <td className="py-2 px-3 text-center">{r.examsTotal}/{r.examsMax}</td>
                     <td className="py-2 px-3 text-center">+{r.otherTotal}</td>
                     <td className="py-2 px-3 text-center">{r.finalPoints}</td>
-                    <td className="py-2 px-3 text-center">{r.letterGrade}</td>
+                    <td className="py-2 px-3 text-center font-semibold">{r.letterGrade}</td>
                     <td className="py-2 px-3 text-center">
                       <span className={`text-xs px-2 py-1 rounded-full ${r.isPublished ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
                         {r.isPublished ? 'Published' : 'Draft'}
                       </span>
                     </td>
                   </tr>
-                ))}
-                {rows.length === 0 && (
-                  <tr>
-                    <td colSpan={8} className="py-6 text-center text-gray-500">No enrolled students found.</td>
-                  </tr>
-                )}
-              </tbody>
+                ))
+              )}</tbody>
             </table>
           </div>
         </CardContent>

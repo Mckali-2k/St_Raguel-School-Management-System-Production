@@ -78,7 +78,7 @@ export interface FirestoreSubmission {
   grade?: number;
   feedback?: string;
   content: string;
-  attachments?: string[];
+  attachments?: { type: 'file' | 'link'; url: string; title?: string; assetId?: string }[];
   maxScore?: number;
   instructions?: string;
   isActive: boolean;
@@ -94,7 +94,7 @@ export interface FirestoreAssignment {
   maxScore: number;
   instructions?: string;
   teacherId: string;
-  attachments?: { type: 'file' | 'link'; url: string; title?: string }[];
+  attachments?: { type: 'file' | 'link'; url: string; title?: string; assetId?: string }[]; // Added assetId for Hygraph deletion
   createdAt: Timestamp;
   updatedAt: Timestamp;
   isActive: boolean;
@@ -108,6 +108,7 @@ export interface FirestoreCourseMaterial {
   description: string;
   type: 'document' | 'video' | 'link' | 'other';
   fileUrl?: string;
+  fileAssetId?: string; // Hygraph asset ID for deletion
   externalLink?: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -206,6 +207,7 @@ export interface FirestoreBlog {
   likes: number;
   // Optional featured image for the blog post
   imageUrl?: string;
+  imageAssetId?: string; // Hygraph asset ID for deletion
 }
 
 export interface FirestoreGrade {
@@ -773,6 +775,7 @@ export const submissionService = {
     const q = query(
       collections.submissions(),
       where('studentId', '==', studentId),
+      where('isActive', '==', true),
       orderBy('submittedAt', 'desc')
     );
     const snapshot = await getDocs(q);
@@ -793,6 +796,7 @@ export const submissionService = {
     const q = query(
       collections.submissions(),
       where('courseId', '==', courseId),
+      where('isActive', '==', true),
       orderBy('submittedAt', 'desc')
     );
     const snapshot = await getDocs(q);
@@ -800,7 +804,6 @@ export const submissionService = {
   },
 
   async createSubmission(submissionData: Omit<FirestoreSubmission, 'id' | 'submittedAt'>): Promise<string> {
-    console.log('Received submission data in createSubmission:', submissionData);
     const now = Timestamp.now();
     const docRef = await addDoc(collections.submissions(), {
       ...submissionData,
@@ -834,6 +837,31 @@ export const submissionService = {
       return { id: docSnap.id, ...docSnap.data() } as FirestoreSubmission;
     }
     return null;
+  },
+
+  async deleteSubmission(submissionId: string): Promise<void> {
+    // First get the submission to check for Hygraph files
+    const submission = await this.getSubmission(submissionId);
+
+    // Delete associated files from Hygraph BEFORE deleting the document
+    if (submission) {
+      try {
+        const { deleteDocumentAssets, extractHygraphAssetIds, extractHygraphUrls } = await import('@/lib/hygraphAssetManager');
+        const assetIds = extractHygraphAssetIds(submission);
+        const urls = extractHygraphUrls(submission);
+        const deletedCount = await deleteDocumentAssets('submission', submissionId, assetIds, urls);
+        if (deletedCount > 0) {
+          console.log(`Deleted ${deletedCount} Hygraph asset(s) for submission ${submissionId}`);
+        }
+      } catch (error) {
+        console.error('Failed to delete submission files from Hygraph:', error);
+        // Continue with submission deletion even if file deletion fails
+      }
+    }
+
+    // Delete the submission document
+    const docRef = doc(db, 'submissions', submissionId);
+    await deleteDoc(docRef);
   },
 };
 
@@ -934,8 +962,38 @@ export const blogService = {
   },
 
   async deleteBlogPost(blogId: string): Promise<void> {
-    const docRef = doc(db, 'blogs', blogId);
-    await deleteDoc(docRef);
+    // First get the blog to check for image
+    const blogRef = doc(db, 'blogs', blogId);
+    const blogSnap = await getDoc(blogRef);
+    
+    if (blogSnap.exists()) {
+      const blog = blogSnap.data() as FirestoreBlog;
+      
+      // Delete associated image from Hygraph BEFORE deleting the document
+      if (blog.imageUrl || blog.imageAssetId) {
+        try {
+          // Use the asset manager for more reliable deletion
+          const { deleteDocumentAssets, extractHygraphAssetIds, extractHygraphUrls } = await import('@/lib/hygraphAssetManager');
+          const assetIds = extractHygraphAssetIds(blog);
+          const urls = extractHygraphUrls(blog);
+          const deletedCount = await deleteDocumentAssets('blog', blogId, assetIds, urls);
+          if (deletedCount === 0 && (assetIds.length > 0 || urls.length > 0)) {
+            console.error('Failed to delete blog images from Hygraph, but continuing with blog deletion');
+          } else if (deletedCount > 0) {
+            console.log(`Deleted ${deletedCount} Hygraph asset(s) for blog ${blogId}`);
+          }
+        } catch (error) {
+          console.error('Failed to delete blog image:', error);
+          // Continue with blog deletion even if image deletion fails
+        }
+      }
+      
+      // Delete the document after attempting to delete the image
+      await deleteDoc(blogRef);
+    } else {
+      // Just delete the document if it exists
+      await deleteDoc(blogRef);
+    }
   },
 };
 
@@ -1113,7 +1171,8 @@ export const assignmentService = {
     const docRef = await addDoc(collections.assignments(), {
       ...assignmentData,
       dueDate: (assignmentData as any).dueDate instanceof Date ? Timestamp.fromDate((assignmentData as any).dueDate) : (assignmentData as any).dueDate,
-      isActive: assignmentData.isActive !== undefined ? assignmentData.isActive : true,
+      // Ensure new assignments are visible in queries filtering by isActive
+      isActive: (assignmentData as any).isActive ?? true,
       createdAt: now,
       updatedAt: now,
     });
@@ -1124,6 +1183,7 @@ export const assignmentService = {
     const q = query(
       collections.assignments(),
       where('courseId', '==', courseId),
+      where('isActive', '==', true),
       limit(limitCount)
     );
     const snapshot = await getDocs(q);
@@ -1136,7 +1196,6 @@ export const assignmentService = {
       return { id: doc.id, ...normalized } as FirestoreAssignment;
     });
     return list
-      .filter(assignment => assignment.isActive !== false) // Client-side filter for isActive
       .sort((a, b) => a.dueDate.toDate().getTime() - b.dueDate.toDate().getTime());
   },
   
@@ -1158,8 +1217,7 @@ export const assignmentService = {
     const docRef = doc(db, 'assignments', assignmentId);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
-      const assignment = { id: docSnap.id, ...docSnap.data() } as FirestoreAssignment;
-      return assignment.isActive ? assignment : null;
+      return { id: docSnap.id, ...docSnap.data() } as FirestoreAssignment;
     }
     return null;
   },
@@ -1167,7 +1225,8 @@ export const assignmentService = {
   async getAssignmentsByTeacher(teacherId: string): Promise<FirestoreAssignment[]> {
     const q = query(
       collections.assignments(),
-      where('teacherId', '==', teacherId)
+      where('teacherId', '==', teacherId),
+      where('isActive', '==', true)
     );
     const snapshot = await getDocs(q);
     const list = snapshot.docs.map(doc => {
@@ -1179,7 +1238,6 @@ export const assignmentService = {
       return { id: doc.id, ...normalized } as FirestoreAssignment;
     });
     return list
-      .filter(assignment => assignment.isActive !== false) // Client-side filter for isActive
       .sort((a, b) => b.createdAt.toDate().getTime() - a.createdAt.toDate().getTime());
   },
 
@@ -1196,11 +1254,82 @@ export const assignmentService = {
   },
 
   async deleteAssignment(assignmentId: string): Promise<void> {
+    // First get the assignment to check for attachments and course info
+    const assignment = await this.getAssignmentById(assignmentId);
+    
+    // Delete associated files from Hygraph BEFORE deleting the document
+    if (assignment?.attachments && assignment.attachments.length > 0) {
+      try {
+        // Use the asset manager for more reliable deletion
+        const { deleteDocumentAssets, extractHygraphAssetIds, extractHygraphUrls } = await import('@/lib/hygraphAssetManager');
+        const assetIds = extractHygraphAssetIds(assignment);
+        const urls = extractHygraphUrls(assignment);
+        const deletedCount = await deleteDocumentAssets('assignment', assignmentId, assetIds, urls);
+        if (deletedCount === 0 && (assetIds.length > 0 || urls.length > 0)) {
+          console.error('Failed to delete assignment attachments from Hygraph, but continuing with assignment deletion');
+        } else if (deletedCount > 0) {
+          console.log(`Deleted ${deletedCount} Hygraph asset(s) for assignment ${assignmentId}`);
+        }
+      } catch (error) {
+        console.error('Failed to delete attachment files:', error);
+        // Continue with assignment deletion even if file deletion fails
+      }
+    }
+    
+    // Delete edit requests for this assignment
+    try {
+      const deletedEditRequests = await assignmentEditRequestService.deleteEditRequestsByAssignment(assignmentId);
+      if (deletedEditRequests > 0) {
+        console.log(`Deleted ${deletedEditRequests} edit requests for assignment ${assignmentId}`);
+      }
+    } catch (error) {
+      console.error('Failed to delete edit requests for assignment:', error);
+    }
+    
+    // Delete assignment submissions
+    try {
+      const submissions = await submissionService.getSubmissionsByAssignment(assignmentId);
+      await Promise.all(submissions.map(sub => submissionService.deleteSubmission(sub.id)));
+      console.log(`Deleted ${submissions.length} submissions for assignment ${assignmentId}`);
+    } catch (error) {
+      console.error('Failed to delete assignment submissions:', error);
+    }
+    
+    // Remove assignment from grades collection
+    if (assignment?.courseId) {
+      try {
+        // Get all grades for this course
+        const gradesQuery = query(collections.grades(), where('courseId', '==', assignment.courseId));
+        const gradesSnapshot = await getDocs(gradesQuery);
+        
+        // Update each grade document to remove the assignment from assignmentGrades array
+        const updatePromises = gradesSnapshot.docs.map(async (gradeDoc) => {
+          const gradeData = gradeDoc.data() as FirestoreGrade;
+          if (gradeData.assignmentGrades && gradeData.assignmentGrades.length > 0) {
+            const filteredGrades = gradeData.assignmentGrades.filter(
+              ag => ag.assignmentId !== assignmentId
+            );
+            
+            // Only update if there was actually a change
+            if (filteredGrades.length !== gradeData.assignmentGrades.length) {
+              await updateDoc(doc(db, 'grades', gradeDoc.id), {
+                assignmentGrades: filteredGrades,
+                updatedAt: Timestamp.now()
+              });
+            }
+          }
+        });
+        
+        await Promise.all(updatePromises);
+        console.log(`Removed assignment ${assignmentId} from grade records`);
+      } catch (error) {
+        console.error('Failed to remove assignment from grades:', error);
+      }
+    }
+    
+    // Delete the assignment document
     const docRef = doc(db, 'assignments', assignmentId);
-    await updateDoc(docRef, {
-      isActive: false,
-      updatedAt: Timestamp.now()
-    });
+    await deleteDoc(docRef);
   },
 };
 
@@ -1210,7 +1339,6 @@ export const courseMaterialService = {
     const now = Timestamp.now();
     const docRef = await addDoc(collections.courseMaterials(), {
       ...materialData,
-      isActive: materialData.isActive !== undefined ? materialData.isActive : true,
       createdAt: now,
       updatedAt: now,
     });
@@ -1226,8 +1354,7 @@ export const courseMaterialService = {
     );
     const snapshot = await getDocs(q);
     return snapshot.docs
-      .map(doc => ({ id: doc.id, ...doc.data() } as FirestoreCourseMaterial))
-      .filter(material => material.isActive !== false); // Client-side filter for isActive
+      .map(doc => ({ id: doc.id, ...doc.data() } as FirestoreCourseMaterial));
   },
 
   async updateCourseMaterial(materialId: string, updates: Partial<FirestoreCourseMaterial>): Promise<void> {
@@ -1239,11 +1366,38 @@ export const courseMaterialService = {
   },
 
   async deleteCourseMaterial(materialId: string): Promise<void> {
-    const docRef = doc(db, 'courseMaterials', materialId);
-    await updateDoc(docRef, {
-      isActive: false,
-      updatedAt: Timestamp.now()
-    });
+    // First get the material to check for files
+    const materialRef = doc(db, 'courseMaterials', materialId);
+    const materialSnap = await getDoc(materialRef);
+    
+    if (materialSnap.exists()) {
+      const material = materialSnap.data() as FirestoreCourseMaterial;
+      
+      // Delete associated file from Hygraph BEFORE deleting the document
+      if (material.fileUrl || material.fileAssetId) {
+        try {
+          // Use the asset manager for more reliable deletion
+          const { deleteDocumentAssets, extractHygraphAssetIds, extractHygraphUrls } = await import('@/lib/hygraphAssetManager');
+          const assetIds = extractHygraphAssetIds(material);
+          const urls = extractHygraphUrls(material);
+          const deletedCount = await deleteDocumentAssets('courseMaterial', materialId, assetIds, urls);
+          if (deletedCount === 0 && (assetIds.length > 0 || urls.length > 0)) {
+            console.error('Failed to delete course material files from Hygraph, but continuing with material deletion');
+          } else if (deletedCount > 0) {
+            console.log(`Deleted ${deletedCount} Hygraph asset(s) for course material ${materialId}`);
+          }
+        } catch (error) {
+          console.error('Failed to delete course material file:', error);
+          // Continue with material deletion even if file deletion fails
+        }
+      }
+      
+      // Delete the document after attempting to delete the file
+      await deleteDoc(materialRef);
+    } else {
+      // Just delete the document if it exists
+      await deleteDoc(materialRef);
+    }
   },
 
   async getMaterialsByTeacher(teacherId: string): Promise<FirestoreCourseMaterial[]> {
@@ -1438,7 +1592,7 @@ export const examAttemptService = {
     await updateDoc(ref, { 
       ...payload, 
       submittedAt: now, 
-      status: 'submitted', 
+      status: hasManualQuestions ? 'submitted' : 'graded', 
       autoScore,
       totalAutoPoints,
       score: autoScore, // Initial score is just auto score
@@ -1505,6 +1659,26 @@ export const activityLogService = {
     const recent = snapshot.docs.map(d => d.data()).filter((d: any) => d.createdAt.toDate() >= since);
     return new Set(recent.map((d: any) => d.dateKey)).size;
   },
+  async cleanupOldLogs(): Promise<number> {
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    const cutoffTimestamp = Timestamp.fromDate(oneWeekAgo);
+    
+    const q = query(
+      collection(db, 'activity_logs'),
+      where('createdAt', '<', cutoffTimestamp)
+    );
+    
+    const snapshot = await getDocs(q);
+    const batch = writeBatch(db);
+    
+    snapshot.docs.forEach(doc => {
+      batch.delete(doc.ref);
+    });
+    
+    await batch.commit();
+    return snapshot.docs.length;
+  },
 };
 
 // Event operations
@@ -1526,8 +1700,7 @@ export const eventService = {
     );
     const snapshot = await getDocs(q);
     return snapshot.docs
-      .map(doc => ({ id: doc.id, ...doc.data() } as FirestoreEvent))
-      .filter(event => event.isActive !== false); // Filter out soft-deleted events
+      .map(doc => ({ id: doc.id, ...doc.data() } as FirestoreEvent));
   },
 
   async createEvent(eventData: Omit<FirestoreEvent, 'id'>): Promise<string> {
@@ -1544,9 +1717,7 @@ export const eventService = {
 
   async deleteEvent(eventId: string): Promise<void> {
     const docRef = doc(db, 'events', eventId);
-    await updateDoc(docRef, {
-      isActive: false
-    });
+    await deleteDoc(docRef);
     try { await adminActionService.log({ userId: auth.currentUser?.uid || 'unknown', action: 'event.delete', targetType: 'event', targetId: eventId }); } catch {}
   },
 };
@@ -1903,6 +2074,27 @@ export const assignmentEditRequestService = {
       respondedBy,
       respondedAt: Timestamp.now()
     });
+  },
+
+  async getEditRequestsByAssignment(assignmentId: string): Promise<FirestoreEditRequest[]> {
+    const q = query(
+      collections.editRequests(),
+      where('assignmentId', '==', assignmentId)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreEditRequest));
+  },
+
+  async deleteEditRequestsByAssignment(assignmentId: string): Promise<number> {
+    try {
+      const editRequests = await this.getEditRequestsByAssignment(assignmentId);
+      await Promise.all(editRequests.map(req => this.deleteEditRequest(req.id)));
+      console.log(`Deleted ${editRequests.length} edit requests for assignment ${assignmentId}`);
+      return editRequests.length;
+    } catch (error) {
+      console.error(`Failed to delete edit requests for assignment ${assignmentId}:`, error);
+      return 0;
+    }
   }
 };
 
@@ -1945,26 +2137,24 @@ export const studentDataService = {
     if (cached) return cached;
 
     try {
-      // Load all student data in parallel with optimized queries and retry logic
+      // First get enrollments to get course IDs for announcements
+      const enrollments = await retry(() => this.getEnrollmentsWithCourses(studentId));
+      const courseIds = enrollments.map(e => e.courseId);
+      
+      // Load remaining data in parallel with optimized queries and retry logic
       const [
-        enrollments,
         stats,
         announcements,
         certificates
       ] = await Promise.all([
-        // Get enrollments with course data
-        retry(() => this.getEnrollmentsWithCourses(studentId)),
         // Get student stats
         retry(() => analyticsService.getStudentStats(studentId)),
-        // Get announcements (limited to 10 for dashboard)
-        retry(() => announcementService.getAnnouncementsForStudent(studentId, [], 10)),
+        // Get announcements (limited to 10 for dashboard) with proper course IDs
+        retry(() => announcementService.getAnnouncementsForStudent(studentId, courseIds, 10)),
         // Get certificates
         retry(() => certificateService.getCertificatesForUser(studentId)).catch(() => [])
       ]);
 
-      // Get course IDs for additional data
-      const courseIds = enrollments.map(e => e.courseId);
-      
       // Load assignments for all courses in parallel
       const assignments = courseIds.length > 0 
         ? await this.getAssignmentsForCourses(courseIds)
@@ -2001,12 +2191,19 @@ export const studentDataService = {
     const courses = await this.getCoursesByIds(courseIds);
     
     // Merge course data with enrollments and filter out inactive courses
-    return enrollments
+    const enrollmentsWithCourses = enrollments
       .map(enrollment => ({
         ...enrollment,
         course: courses[enrollment.courseId] || null
       }))
       .filter(enrollment => enrollment.course !== null);
+    
+    // Remove duplicates based on courseId (in case of duplicate enrollments)
+    const uniqueEnrollments = enrollmentsWithCourses.filter((enrollment, index, self) => 
+      index === self.findIndex(e => e.courseId === enrollment.courseId)
+    );
+    
+    return uniqueEnrollments;
   },
 
   async getCoursesByIds(courseIds: string[]) {
@@ -2031,7 +2228,14 @@ export const studentDataService = {
     );
     
     const assignmentArrays = await Promise.all(assignmentPromises);
-    return assignmentArrays.flat();
+    const allAssignments = assignmentArrays.flat();
+    
+    // Remove duplicates based on assignment ID
+    const uniqueAssignments = allAssignments.filter((assignment, index, self) => 
+      index === self.findIndex(a => a.id === assignment.id)
+    );
+    
+    return uniqueAssignments;
   },
 
   async getStudentCoursesData(studentId: string) {
@@ -2056,10 +2260,14 @@ export const studentDataService = {
         lastAccessed: enrollment.lastAccessedAt?.toDate()
       }));
 
-      setCachedData(cacheKey, result);
-      return result;
+      // Ensure uniqueness by course ID (additional safety measure)
+      const uniqueResult = result.filter((course, index, self) => 
+        index === self.findIndex(c => c.id === course.id)
+      );
+
+      setCachedData(cacheKey, uniqueResult);
+      return uniqueResult;
     } catch (error) {
-      console.error('Error loading student courses data:', error);
       throw error;
     }
   },
@@ -2068,13 +2276,11 @@ export const studentDataService = {
     const cacheKey = `assignments_${studentId}`;
     const cached = getCachedData(cacheKey);
     if (cached) {
-      console.log('Using cached assignments data for student:', studentId);
       return cached;
     }
 
     try {
       const enrollments = await this.getEnrollmentsWithCourses(studentId);
-      console.log('Enrollments for student:', studentId, enrollments.map(e => ({ courseId: e.courseId, courseTitle: e.course?.title, isActive: e.course?.isActive })));
       
       const courseIds = enrollments.map(e => e.courseId);
       
@@ -2086,7 +2292,6 @@ export const studentDataService = {
         submissionService.getSubmissionsByStudent(studentId)
       ]);
       
-      console.log('Assignments loaded for student:', studentId, assignments.map(a => ({ id: a.id, title: a.title, courseId: a.courseId })));
 
       // Create a map of submissions by assignment ID
       const submissionMap = new Map();
@@ -2197,10 +2402,8 @@ export const studentDataService = {
   // Clear cache for a specific student (useful when data changes)
   clearStudentCache(studentId: string) {
     const keys = [`dashboard_${studentId}`, `courses_${studentId}`, `assignments_${studentId}`, `submissions_${studentId}`];
-    console.log('Clearing cache for student:', studentId, 'keys:', keys);
     keys.forEach(key => {
-      const deleted = studentDataCache.delete(key);
-      console.log(`Cache key ${key} deleted:`, deleted);
+      studentDataCache.delete(key);
     });
   }
 };
@@ -2251,21 +2454,56 @@ export const gradeService = {
     await deleteDoc(docRef);
   },
 
-  // Helper function to calculate letter grade and grade points
-  calculateLetterGradeAndPoints(finalGrade: number): { letterGrade: string; gradePoints: number } {
-    if (finalGrade >= 97) return { letterGrade: 'A+', gradePoints: 4.0 };
-    if (finalGrade >= 93) return { letterGrade: 'A', gradePoints: 4.0 };
-    if (finalGrade >= 90) return { letterGrade: 'A-', gradePoints: 3.7 };
-    if (finalGrade >= 87) return { letterGrade: 'B+', gradePoints: 3.3 };
-    if (finalGrade >= 83) return { letterGrade: 'B', gradePoints: 3.0 };
-    if (finalGrade >= 80) return { letterGrade: 'B-', gradePoints: 2.7 };
-    if (finalGrade >= 77) return { letterGrade: 'C+', gradePoints: 2.3 };
-    if (finalGrade >= 73) return { letterGrade: 'C', gradePoints: 2.0 };
-    if (finalGrade >= 70) return { letterGrade: 'C-', gradePoints: 1.7 };
-    if (finalGrade >= 67) return { letterGrade: 'D+', gradePoints: 1.3 };
-    if (finalGrade >= 63) return { letterGrade: 'D', gradePoints: 1.0 };
-    if (finalGrade >= 60) return { letterGrade: 'D-', gradePoints: 0.7 };
-    return { letterGrade: 'F', gradePoints: 0.0 };
+  // Helper function to calculate letter grade and grade points using configured ranges
+  async calculateLetterGradeAndPoints(finalGradePercent: number): Promise<{ letterGrade: string; gradePoints: number }> {
+    try {
+      const ranges = await settingsService.getGradeRanges();
+      // Sort by min desc; ensure inclusive [min, max]
+      const sorted = Object.entries(ranges).sort(([, a], [, b]) => (b as any).min - (a as any).min);
+      for (const [letter, cfg] of sorted) {
+        const min = (cfg as any).min ?? 0;
+        const max = (cfg as any).max ?? 100;
+        if (finalGradePercent >= min && finalGradePercent <= max) {
+          return { letterGrade: letter, gradePoints: (cfg as any).points ?? 0 };
+        }
+      }
+      return { letterGrade: 'F', gradePoints: 0 };
+    } catch {
+      // Fallback to classic mapping if settings unavailable
+      if (finalGradePercent >= 97) return { letterGrade: 'A+', gradePoints: 4.0 };
+      if (finalGradePercent >= 93) return { letterGrade: 'A', gradePoints: 4.0 };
+      if (finalGradePercent >= 90) return { letterGrade: 'A-', gradePoints: 3.7 };
+      if (finalGradePercent >= 87) return { letterGrade: 'B+', gradePoints: 3.3 };
+      if (finalGradePercent >= 83) return { letterGrade: 'B', gradePoints: 3.0 };
+      if (finalGradePercent >= 80) return { letterGrade: 'B-', gradePoints: 2.7 };
+      if (finalGradePercent >= 77) return { letterGrade: 'C+', gradePoints: 2.3 };
+      if (finalGradePercent >= 73) return { letterGrade: 'C', gradePoints: 2.0 };
+      if (finalGradePercent >= 70) return { letterGrade: 'C-', gradePoints: 1.7 };
+      if (finalGradePercent >= 67) return { letterGrade: 'D+', gradePoints: 1.3 };
+      if (finalGradePercent >= 63) return { letterGrade: 'D', gradePoints: 1.0 };
+      if (finalGradePercent >= 60) return { letterGrade: 'D-', gradePoints: 0.7 };
+      return { letterGrade: 'F', gradePoints: 0.0 };
+    }
+  },
+
+  async calculateLetterFromPoints(
+    achievedPoints: number,
+    maxPoints: number,
+    rangesOverride?: GradeRangesConfig
+  ): Promise<{ letterGrade: string; gradePoints: number }> {
+    const percent = maxPoints > 0 ? Math.round((achievedPoints / maxPoints) * 100) : 0;
+    if (rangesOverride) {
+      const sorted = Object.entries(rangesOverride).sort(([, a], [, b]) => (b as any).min - (a as any).min);
+      for (const [letter, cfg] of sorted) {
+        const min = (cfg as any).min ?? 0;
+        const max = (cfg as any).max ?? 100;
+        if (percent >= min && percent <= max) {
+          return { letterGrade: letter, gradePoints: (cfg as any).points ?? 0 };
+        }
+      }
+      return { letterGrade: 'F', gradePoints: 0 };
+    }
+    return this.calculateLetterGradeAndPoints(percent);
   },
 
   // Calculate final grade based on assignment grades
@@ -2294,8 +2532,10 @@ export const gradeService = {
       finalGrade = assignmentGrades.reduce((sum, ag) => sum + ag.grade, 0) / assignmentGrades.length;
     }
 
-    const { letterGrade, gradePoints } = this.calculateLetterGradeAndPoints(finalGrade);
-    return { finalGrade: Math.round(finalGrade * 100) / 100, letterGrade, gradePoints };
+    // finalGrade here is in percent already (0-100) for assignment average; use directly
+    const rounded = Math.round(finalGrade * 100) / 100;
+    const { letterGrade, gradePoints } = await this.calculateLetterGradeAndPoints(rounded);
+    return { finalGrade: rounded, letterGrade, gradePoints };
   },
 
   async publishCourseGrades(courseId: string): Promise<void> {

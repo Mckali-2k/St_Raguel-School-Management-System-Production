@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { submissionService, assignmentService, enrollmentService, courseService, gradeService, examService, examAttemptService, otherGradeService, userService, settingsService, FirestoreGrade, FirestoreExam, FirestoreExamAttempt, FirestoreOtherGrade } from '@/lib/firestore';
+import { calculateLetterGrade, calculateGPA } from '@/lib/gradeUtils';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -90,6 +91,7 @@ export default function AdminStudentGrades() {
   const [otherGrades, setOtherGrades] = useState<FirestoreOtherGrade[]>([]);
   const [courses, setCourses] = useState<any[]>([]);
   const [expandedCourses, setExpandedCourses] = useState<{ [key: string]: boolean }>({});
+  const [expandedOtherCourses, setExpandedOtherCourses] = useState<{ [key: string]: boolean }>({});
   const [selectedCourseForGrade, setSelectedCourseForGrade] = useState<string>('');
   const [gradeRanges, setGradeRanges] = useState<any>({});
   const [isPublishing, setIsPublishing] = useState(false);
@@ -163,8 +165,7 @@ export default function AdminStudentGrades() {
         setGradeRanges(ranges);
       } catch {}
 
-      // Automatically calculate final grades for all courses using assignments + exams + other grades
-      await calculateAllFinalGrades();
+      // Do not auto-calculate or persist final grades here; admins assign letters explicitly elsewhere
 
     } catch (error) {
       console.error('Error loading student data:', error);
@@ -422,66 +423,99 @@ export default function AdminStudentGrades() {
     return filtered;
   }, [finalGrades, courses, searchTerm, courseFilter, sortBy]);
 
-  // GPA Calculations (Semester, Yearly, Cumulative)
+  const calculateLetterGradeWithRanges = (points: number): { letter: string; points: number } => {
+    return calculateLetterGrade(points, 100, gradeRanges);
+  };
+
+  // Helper function to get normalized grade points for a final grade
+  const getGradePoints = (grade: any): number => {
+    let points = grade.gradePoints;
+    if (!points || points === 0) {
+      const pointsToGrade = Math.min(grade.finalGrade, 100);
+      const { points: calculatedPoints } = calculateLetterGradeWithRanges(pointsToGrade);
+      points = calculatedPoints;
+    }
+    // Ensure gradePoints is valid and within range (0-4.0)
+    return isNaN(points) ? 0 : Math.min(4.0, Math.max(0, points));
+  };
+
+  // GPA Calculations (Semester, Yearly, Cumulative) using Ethiopian Calendar
   const gpaStats = useMemo(() => {
     // Helper to get semester based on Ethiopian calendar
     const getSemester = (ethiopianMonth: number) => {
       if (ethiopianMonth >= 1 && ethiopianMonth <= 5) {
-        return 1; // Semester 1
+        return 1; // Semester 1: Meskerem to Tir
       } else if (ethiopianMonth >= 6 && ethiopianMonth <= 12) {
-        return 2; // Semester 2
+        return 2; // Semester 2: Yekatit to Nehase
       }
-      return null; // Pagume is not in a semester
+      return null; // Pagume (month 13) is not assigned to a semester
     };
 
-    const byYear: Record<string, { semesters: Record<number, { totalPoints: number; count: number }>; totalPoints: number; count: number }>
-      = {};
+    const byYear: Record<string, { 
+      semesters: Record<number, { totalPoints: number; count: number }>; 
+      totalPoints: number; 
+      count: number 
+    }> = {};
 
+    // Process each final grade and categorize by Ethiopian year and semester
     finalGrades.forEach((g) => {
+      // Include all final grades (published and drafts) for admin GPA view
       const d = g.calculatedAt.toDate();
       const ethiopianDate = toEthiopianDate(d);
       const year = ethiopianDate.year.toString();
       const sem = getSemester(ethiopianDate.month);
 
+      // Only process grades that fall within a semester (exclude Pagume)
       if (sem) {
         if (!byYear[year]) {
-          byYear[year] = { semesters: { 1: { totalPoints: 0, count: 0 }, 2: { totalPoints: 0, count: 0 } }, totalPoints: 0, count: 0 };
+          byYear[year] = { 
+            semesters: { 
+              1: { totalPoints: 0, count: 0 }, 
+              2: { totalPoints: 0, count: 0 } 
+            }, 
+            totalPoints: 0, 
+            count: 0 
+          };
         }
-        byYear[year].semesters[sem].totalPoints += g.gradePoints;
+        
+        const points = getGradePoints(g);
+        
+        // Add to semester totals
+        byYear[year].semesters[sem].totalPoints += points;
         byYear[year].semesters[sem].count += 1;
-        byYear[year].totalPoints += g.gradePoints;
+        
+        // Add to yearly totals
+        byYear[year].totalPoints += points;
         byYear[year].count += 1;
       }
     });
 
+    // Calculate GPAs for each year and semester
     const byYearGPA: Record<string, { semester1GPA: number; semester2GPA: number; yearlyGPA: number }> = {};
-    let cumulativePoints = 0;
-    let cumulativeCount = 0;
+    
     Object.entries(byYear).forEach(([year, data]) => {
       const s1 = data.semesters[1];
       const s2 = data.semesters[2];
-      const semester1GPA = s1.count > 0 ? Math.round((s1.totalPoints / s1.count) * 100) / 100 : 0;
-      const semester2GPA = s2.count > 0 ? Math.round((s2.totalPoints / s2.count) * 100) / 100 : 0;
-      const yearlyGPA = data.count > 0 ? Math.round((data.totalPoints / data.count) * 100) / 100 : 0;
+      
+      // Calculate semester GPAs with proper rounding and range validation (0-4.0)
+      const semester1GPA = s1.count > 0 ? 
+        Math.min(4.0, Math.max(0, Math.round((s1.totalPoints / s1.count) * 100) / 100)) : 0;
+      const semester2GPA = s2.count > 0 ? 
+        Math.min(4.0, Math.max(0, Math.round((s2.totalPoints / s2.count) * 100) / 100)) : 0;
+      
+      // Calculate yearly GPA (average of all courses in that Ethiopian year)
+      const yearlyGPA = data.count > 0 ? 
+        Math.min(4.0, Math.max(0, Math.round((data.totalPoints / data.count) * 100) / 100)) : 0;
+      
       byYearGPA[year] = { semester1GPA, semester2GPA, yearlyGPA };
-      cumulativePoints += data.totalPoints;
-      cumulativeCount += data.count;
     });
 
-    const cumulativeGPA = cumulativeCount > 0 ? Math.round((cumulativePoints / cumulativeCount) * 100) / 100 : 0;
+    // Calculate cumulative GPA using all final grades (regardless of semester assignment)
+    const allGradePoints = finalGrades.map(getGradePoints);
+    const cumulativeGPA = calculateGPA(allGradePoints);
+    
     return { byYearGPA, cumulativeGPA };
-  }, [finalGrades]);
-
-  const calculateLetterGradeWithRanges = (finalGrade: number): { letterGrade: string; gradePoints: number } => {
-    const sortedRanges = Object.entries(gradeRanges).sort(([, a], [, b]) => (b as any).min - (a as any).min);
-    for (const [letter, range] of sortedRanges) {
-      const r = range as any;
-      if (finalGrade >= r.min) {
-        return { letterGrade: letter, gradePoints: r.points };
-      }
-    }
-    return { letterGrade: 'F', gradePoints: 0.0 };
-  };
+  }, [finalGrades, gradeRanges]);
 
   const refreshFinalGrades = async () => {
     try {
@@ -514,12 +548,9 @@ export default function AdminStudentGrades() {
       const finalGradeInPoints = assignmentPoints + examPoints + otherPoints;
 
       const totalPossiblePoints = assignmentMax + examMax;
-      let finalGradeInPercentage = 0;
-      if (totalPossiblePoints > 0) {
-        finalGradeInPercentage = Math.round(((assignmentPoints + examPoints + otherPoints) / totalPossiblePoints) * 100);
-      }
 
-      const { letterGrade, gradePoints } = calculateLetterGradeWithRanges(finalGradeInPercentage);
+      const points = Math.min(finalGradeInPoints, 100);
+      const { letter: letterGrade, points: gradePoints } = calculateLetterGradeWithRanges(points);
 
       // Check if grade already exists
       const existing = await gradeService.getGradeByStudentAndCourse(courseId, student.id!);
@@ -583,12 +614,8 @@ export default function AdminStudentGrades() {
   };
 
   const getGradeLetter = (grade: number, maxScore: number) => {
-    const percentage = (grade / maxScore) * 100;
-    if (percentage >= 90) return 'A';
-    if (percentage >= 80) return 'B';
-    if (percentage >= 70) return 'C';
-    if (percentage >= 60) return 'D';
-    return 'F';
+    const { letter } = calculateLetterGrade(grade, maxScore, gradeRanges);
+    return letter;
   };
 
   const toggleYear = (year: string) => {
@@ -824,14 +851,19 @@ export default function AdminStudentGrades() {
               <CardContent><div className="text-3xl font-bold">{gpaStats.cumulativeGPA.toFixed(2)}</div></CardContent>
             </Card>
             <Card className="bg-white border-gray-100 lg:col-span-2">
-              <CardHeader className="pb-2"><CardTitle className="text-sm text-gray-600">Yearly & Semester GPA</CardTitle></CardHeader>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-gray-600">Yearly & Semester GPA</CardTitle>
+                <CardDescription className="text-xs text-gray-500">
+                  Based on Ethiopian Calendar: Sem 1 (Meskerem-Tir), Sem 2 (Yekatit-Nehase)
+                </CardDescription>
+              </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {Object.entries(gpaStats.byYearGPA)
                     .sort((a,b) => Number(b[0]) - Number(a[0]))
                     .map(([year, g]) => (
                     <div key={year} className="p-3 border rounded-lg">
-                      <div className="text-sm font-semibold text-gray-800">{year}</div>
+                      <div className="text-sm font-semibold text-gray-800">Ethiopian Year {year}</div>
                       <div className="mt-1 text-sm text-gray-700">Year GPA: <span className="font-semibold">{g.yearlyGPA.toFixed(2)}</span></div>
                       <div className="mt-1 text-xs text-gray-600">Sem 1: {g.semester1GPA.toFixed(2)} • Sem 2: {g.semester2GPA.toFixed(2)}</div>
                     </div>
@@ -1177,22 +1209,37 @@ export default function AdminStudentGrades() {
                             <h3 className="text-lg font-semibold text-gray-800 mb-4">Academic Year {year}</h3>
                             {Object.entries(courseGroups).map(([courseId, entries]) => {
                               const course = courses.find(c => c.id === courseId);
+                              const courseKey = `${year}_${courseId}`;
+                              const totalPoints = entries.reduce((sum, e) => sum + (e.points || 0), 0);
+                              
                               return (
                                 <div key={courseId} className="mb-6">
-                                  <div className="w-full flex items-center justify-between py-3 text-left rounded-lg px-3 border border-gray-200">
+                                  <button
+                                    onClick={() => setExpandedOtherCourses(prev => ({ ...prev, [courseKey]: !prev[courseKey] }))}
+                                    className="w-full flex items-center justify-between py-3 text-left rounded-lg px-3 border border-gray-200 hover:bg-gray-50 transition-colors"
+                                  >
                                     <div className="flex items-center gap-2">
+                                      {expandedOtherCourses[courseKey] ? (
+                                        <ChevronDown size={16} className="text-gray-400" />
+                                      ) : (
+                                        <ChevronRight size={16} className="text-gray-400" />
+                                      )}
                                       <span className="font-medium text-gray-800">{course?.title || courseId}</span>
                                       <span className="text-sm text-gray-500">({entries.length} entries)</span>
                                     </div>
-                                  </div>
-                                  <div className="ml-6 mt-3">
-                                    <div className="overflow-x-auto">
-                                      <table className="w-full">
-                                        <thead>
-                                          <tr className="border-b border-gray-200">
-                                            <th className="text-left py-3 px-4 font-medium text-gray-700">Reason</th>
-                                            <th className="text-center py-3 px-4 font-medium text-gray-700">Points</th>
-                                            <th className="text-center py-3 px-4 font-medium text-gray-700">Date</th>
+                                    <Badge variant="secondary">
+                                      Total: {totalPoints} points
+                                    </Badge>
+                                  </button>
+                                  {expandedOtherCourses[courseKey] && (
+                                    <div className="ml-6 mt-3">
+                                      <div className="overflow-x-auto">
+                                        <table className="w-full">
+                                          <thead>
+                                            <tr className="border-b border-gray-200">
+                                              <th className="text-left py-3 px-4 font-medium text-gray-700">Reason</th>
+                                              <th className="text-center py-3 px-4 font-medium text-gray-700">Points</th>
+                                              <th className="text-center py-3 px-4 font-medium text-gray-700">Date</th>
                                           </tr>
                                         </thead>
                                         <tbody>
@@ -1216,6 +1263,7 @@ export default function AdminStudentGrades() {
                                       </table>
                                     </div>
                                   </div>
+                                  )}
                                 </div>
                               );
                             })}
@@ -1272,13 +1320,11 @@ export default function AdminStudentGrades() {
                                     <th className="text-center py-3 px-4 font-medium text-gray-700">Method</th>
                                     <th className="text-center py-3 px-4 font-medium text-gray-700">Status</th>
                                     <th className="text-center py-3 px-4 font-medium text-gray-700">Calculated</th>
-                                    <th className="text-right py-3 px-4 font-medium text-gray-700">Actions</th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {yearGrades.map((grade) => {
-                                    // Use the configured grade ranges instead of hardcoded values
-                                    const { letterGrade } = calculateLetterGradeWithRanges(grade.finalGrade);
+                                    const letterGrade = grade.letterGrade || '';
                                     return (
                                       <tr key={grade.id} className="border-b border-gray-100 hover:bg-gray-50">
                                         <td className="py-3 px-4 text-gray-800 font-medium">{grade.courseTitle}</td>
@@ -1289,8 +1335,8 @@ export default function AdminStudentGrades() {
                                           </span>
                                         </td>
                                         <td className="py-3 px-4 text-center">
-                                          <Badge variant={letterGrade.startsWith('A') ? 'default' : letterGrade.startsWith('B') ? 'secondary' : letterGrade.startsWith('C') ? 'outline' : 'destructive'}>
-                                            {grade.letterGrade}
+                                          <Badge variant={letterGrade && letterGrade.startsWith('A') ? 'default' : letterGrade && letterGrade.startsWith('B') ? 'secondary' : letterGrade && letterGrade.startsWith('C') ? 'outline' : 'destructive'}>
+                                            {letterGrade}
                                           </Badge>
                                         </td>
                                         <td className="py-3 px-4 text-center text-gray-600 capitalize text-sm">
@@ -1303,11 +1349,6 @@ export default function AdminStudentGrades() {
                                         </td>
                                         <td className="py-3 px-4 text-center text-gray-600 text-sm">
                                           {grade.calculatedAt.toDate().toLocaleDateString()}
-                                        </td>
-                                        <td className="py-3 px-4 text-right">
-                                          <Button variant="outline" size="sm" onClick={() => calculateFinalGradeForCourse(grade.courseId)}>
-                                            Recalculate
-                                          </Button>
                                         </td>
                                       </tr>
                                     );
