@@ -153,7 +153,7 @@ const Academic: React.FC = () => {
       <div className="relative bg-gradient-to-r from-blue-600 to-[#13A0E2] text-white">
         {/* Background Image */}
         <img
-          src="../../asset/background-img.png"
+          src="/assets/background-img.png"
           alt="background"
           className="absolute inset-0 w-full h-full object-cover opacity-20"
         />

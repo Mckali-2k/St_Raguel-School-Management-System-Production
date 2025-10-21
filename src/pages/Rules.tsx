@@ -118,7 +118,7 @@ const Rules = () => {
     <div className="min-h-screen bg-background">
       <Header />
       <div className="relative bg-gradient-to-r from-blue-600 to-[#13A0E2] text-white">
-        <img src="/src/assets/background-img.png" alt="background" className="absolute inset-0 w-full h-full object-cover opacity-20" />
+        <img src="/assets/background-img.png" alt="background" className="absolute inset-0 w-full h-full object-cover opacity-20" />
         <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24 text-center">
           <h1 className="text-4xl md:text-5xl font-bold mb-4">{t('rules.hero.title')}</h1>
           <p className="text-xl mb-8">{t('rules.hero.subtitle')}</p>

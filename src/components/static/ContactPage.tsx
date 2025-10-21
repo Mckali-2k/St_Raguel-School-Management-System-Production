@@ -73,7 +73,7 @@ export default function ContactPage() {
     <div className="min-h-screen bg-gradient-to-r from-blue-600 to-[#13A0E2]">
       {/* Hero Section */}
       <div className="relative text-white">
-        <img src="/src/assets/background-img.png" alt="background" className="absolute inset-0 w-full h-full object-cover opacity-20" />
+        <img src="/assets/background-img.png" alt="background" className="absolute inset-0 w-full h-full object-cover opacity-20" />
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24">
           <div className="text-center">
             <h1 className="text-4xl md:text-6xl font-bold mb-6">{t('contact.hero.title')}</h1>
