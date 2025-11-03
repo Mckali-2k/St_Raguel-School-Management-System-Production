@@ -19,19 +19,19 @@ export default function ContactPage() {
     {
       icon: Phone,
       title: t('contact.cards.phone.title'),
-      details: ['+251-11-123-4567', '+251-11-123-4568'],
+      details: ['+251-11-278-4646', '+251-975726868'],
       description: t('contact.cards.phone.description')
     },
     {
       icon: Mail,
       title: t('contact.cards.email.title'),
-      details: ['info@straguel.edu.et', 'admissions@straguel.edu.et'],
+      details: ['dhsraguelabssedu21@gmail.com'],
       description: t('contact.cards.email.description')
     },
     {
       icon: MapPin,
       title: t('contact.cards.address.title'),
-      details: ['St. Raguel Church Spiritual School', 'Addis Ababa, Ethiopia'],
+      details: ['Merkato St.Raguel Church Anqtse birhan Sunday school, Woreda 8', 'Addis Ababa, Ethiopia'],
       description: t('contact.cards.address.description')
     },
     {
@@ -157,9 +157,8 @@ export default function ContactPage() {
                   <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('contact.visit.title')}</h3>
                   <p className="text-gray-600 mb-4">{t('contact.visit.body')}</p>
                   <div className="space-y-2 text-sm text-gray-600">
-                    <p><strong>{t('contact.visit.address')}</strong> St. Raguel Church Spiritual School</p>
+                    <p><strong>{t('contact.visit.address')}</strong>Merkato St.Raguel Church Anqtse birhan Sunday school,Woreda 8</p>
                     <p><strong>{t('contact.visit.city')}</strong> Addis Ababa, Ethiopia</p>
-                    <p><strong>{t('contact.visit.postalCode')}</strong> 1000</p>
                   </div>
                 </div>
               </div>
@@ -171,16 +170,10 @@ export default function ContactPage() {
                     <Phone className="h-5 w-5 text-blue-600" />
                     <div>
                       <p className="font-medium text-blue-900">{t('contact.quick.emergency.title')}</p>
-                      <p className="text-sm text-blue-700">{t('contact.quick.emergency.value')}</p>
+                      <p className="text-sm text-blue-700">+251-11-278-4646</p>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-3">
-                    <Mail className="h-5 w-5 text-blue-600" />
-                    <div>
-                      <p className="font-medium text-blue-900">{t('contact.quick.support.title')}</p>
-                      <p className="text-sm text-blue-700">{t('contact.quick.support.value')}</p>
-                    </div>
-                  </div>
+                  
                 </div>
               </div>
 

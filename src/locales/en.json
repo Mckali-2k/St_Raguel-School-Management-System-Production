@@ -371,6 +371,51 @@
             "cta": "View FAQ"
         }
     },
+    "academic": {
+        "hero": {
+            "title": "Academic Programs",
+            "subtitle": "Comprehensive theological education for spiritual leaders"
+        },
+        "subhero": {
+            "title": "Our yearly offerings",
+            "subtitle": "Explore our comprehensive range of theological and spiritual studies programs"
+        },
+        "offerings": {
+            "year1": {
+                "course1": ["Dogmatic theology", "84 hour", "5 Credits", "Passed entrance exam, over 10th grade, over 18 years old"],
+                "course2": ["General bible study", "57 hour", "3 Credits", "Passed entrance exam, over 10th grade, over 18 years old"],
+                "course3": ["General Church History", " 57 hour", "3 Credits", "Passed entrance exam, over 10th grade, over 18 years old"],
+                "course4": ["Pastoral Care & Counseling", "57 hour", "3 Credits", "Passed entrance exam, over 10th grade, over 18 years old"],
+                "course5": ["General Christian Ethics", "29 hours", "2 Credits", "Passed entrance exam, over 10th grade, over 18 years old"]
+            },
+            "year2": {
+                "course1": ["World Church History", "57 hour", "3 Credits", "History Introduction"],
+                "course2": ["Ethiopian Church history", "57 hour", "3 Credits", "History Introduction"],
+                "course3": ["sacramental Theology", "57 hour", "3 Credits", "-"],
+                "course4": ["Maeiology and Saintology", "57 hour", "3 Credits", "ትምህርተ ሃይማኖት መግቢያ"],
+                "course5": ["Geez 2", "29 hours", "2 Credits", "Geez 1"],
+                "course6": ["Liturgy", "29 hours", "2 Credits", "-"]
+            },
+            "year4": {
+                "course1": ["Synoptic Gospel Andemita  2", "57 hour", "3 Credits", "Matthew Implications 1"],
+                "course2": ["Jhonile Gospel Andemita 2", "57 hour", "3 Credits", "Jhonile Gospel Andemita 1"],
+                "course3": ["Patrology and patrisitic writing", "57 hour", "3 Credits", "ነገረ ድኅነት ፣ጉባኤያት"],
+                "course4": ["Geez 4", "57 hour", "3 Credits", "Geez 3"],
+                "course5": ["Homiletics", "57 hours", "3 Credits", "-"],
+                "course6": ["Thesis", "29 hours", "2 Credits", "Research and Methodology"]
+            },
+            "year3": {
+                "course1": ["Synoptic Gospel Andemita  1", "57 hour", "3 Credits", "New Testament"],
+                "course2": ["Jhonile Gospel Andemita 1", "57 hour", "3 Credits", "New Testament"],
+                "course3": ["Ecumenical council", "29 hour", "2 Credits", "ት/ሃይማኖት፣ ነገረ ማርያም ወቅዱሳን"],
+                "course4": ["Research Methology", "29 hour'", "2 Credits", "-"],
+                "course5": ["Spiritual Liturgy", "29 hours", "2 Credits", "-"],
+                "course6": ["Geez 3", "57 hours", "3 Credits", "Geez 2"],
+                "course7": ["Soteriology", "29 hours", "2 Credits", "ት/ሃይማኖት፣ ነገረ ማርያም ወቅዱሳን"]
+            }
+        },
+        "cta": { "title": "Ready to Start Your Academic Journey?", "subtitle": "Take the first step towards your calling in spiritual leadership and service.", "applyButton": "Apply for Admission" }
+    },
     "academicPage": {
         "title": "Academic Programs",
         "subtitle": "Explore all available courses and programs",
@@ -415,6 +460,33 @@
             "dress": { "title": "Dress Code", "body": "Modest attire is required on campus and during services, in accordance with school guidelines." },
             "integrity": { "title": "Academic Integrity", "body": "Plagiarism, cheating, and any form of academic dishonesty are strictly prohibited." },
             "facilities": { "title": "Use of Facilities", "body": "School facilities should be used responsibly. Any damage or misuse will result in disciplinary action." }
+        },
+        "importantNotice": {
+            "title": "Important Notice",
+            "body": "All students are expected to read and acknowledge understanding of these rules and regulations upon enrollment. Violations of these policies may result in disciplinary action, including but not limited to warnings, probation, suspension, or expulsion from the institution.",
+            "body2": "If you have questions about any of these policies, please contact the Student Affairs Office for clarification and guidance."
+        },
+        "ruleCategories": {
+            "StudentConduct": { "title": "Student Conduct", "rules": ["Maintain respectful behavior towards faculty, staff, and fellow students", "Dress modestly and appropriately according to institutional guidelines", "Attend all scheduled classes and participate actively in discussions", "Submit assignments on time and maintain academic honesty", "Participate in community worship and spiritual formation activities"] },
+            "AcademicStandards": { "title": "Academic Standards", "rules": ["Maintain a minimum GPA of 3.5 to remain in good academic standing", "Complete all required coursework within the designated timeframe", "Cite all sources properly and avoid plagiarism in all academic work", "Attend at least 80% of classes for each course to be eligible for examinations", "Seek academic support when needed through tutoring and counseling services"] },
+            "AcademicPolicies": { "title": "Academic Policies", "rules": ["Regular attendance is mandatory for all classes and chapel services", "Notify instructors in advance for any planned absences when possible", "Provide documentation for medical or emergency-related absences", "Make up missed work within one week of returning to class", "Excessive absences may result in course failure or disciplinary action"] },
+            "CampusSafety": { "title": "Campus Safety", "rules": ["Follow all safety protocols and emergency procedures", "Report any safety concerns or incidents to campus security immediately", "Maintain clean and organized living and study spaces", "Respect campus property and report any damages promptly", "Comply with visitor policies and escort guests at all times"] },
+            "SpiritualFormation": { "title": "Spiritual Formation", "rules": ["Participate actively in daily prayers and weekly chapel services", "Engage respectfully in interfaith dialogue and discussions", "Complete required spiritual formation activities and retreats", "Maintain personal devotional practices as encouraged by faculty", "Serve the community through volunteer work and outreach programs"] },
+            "DisciplinaryProcedures": { "title": "Disciplinary Procedures", "rules": ["Minor infractions result in verbal warnings and counseling", "Repeated violations may lead to written warnings and probation", "Serious misconduct can result in suspension or expulsion", "Students have the right to appeal disciplinary decisions", "All disciplinary actions are documented in student records"] }
+        },
+        "Download": {
+            "title": "Download Complete Guidelines",
+            "subTitle": "Access detailed policy documents for comprehensive information",
+            "button": { "label": "Complete Student Handbook and Rules", "subLabel": "Comprehensive guide covering all policies and procedures" }
+        },
+        "Questions": {
+            "title": "Questions About Our Policies?",
+            "body": "Our Student Affairs team is here to help clarify any questions you may have",
+            "contactButton": "Contact Student Affairs"
+        },
+        "communityStandards": {
+            "title": "Community Standards",
+            "body": "These guidelines help create a supportive environment where all members of our community can grow spiritually, academically, and personally. We expect all studentsto uphold these standards with integrity and respect."
         }
     },
     "searchResults": {
