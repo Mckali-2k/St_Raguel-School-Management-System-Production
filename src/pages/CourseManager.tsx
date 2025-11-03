@@ -26,6 +26,7 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
 import DashboardHero from '@/components/DashboardHero';
+import { useI18n } from '@/contexts/I18nContext';
 
 interface CourseWithApproval extends FirestoreCourse {
   needsApproval?: boolean;
@@ -84,6 +85,8 @@ export default function CourseManager() {
   const totalCourses = courses.length;
   const activeCourses = courses.filter(c => c.isActive).length;
   const totalStudents = totalEnrolledStudents;
+  const { t } = useI18n();
+
 
   const navigate = useNavigate();
 
@@ -554,8 +557,8 @@ export default function CourseManager() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-green-50">
       <DashboardHero 
-        title="Course Management"
-        subtitle="Manage courses, approvals, and content."
+        title={`${t('nav.courseManagement')}`}
+        subtitle={t('nav.courseManagementSubtitle')}
       >
         {userProfile?.role === 'admin' && (
             <div className="mt-4 lg:mt-0">

@@ -12,6 +12,8 @@
         "calendar": "Calendar",
         "userManagement": "User Management",
         "courseManagement": "Course Management",
+        "courseManagementSubtitle": "Manage courses, approvals, and content.",
+        "attendance": "Attendance",
         "events": "Events",
         "reports": "Reports",
         "settings": "System Settings",
@@ -28,7 +30,8 @@
         "grades": "Grades",
         "analytics": "Analytics",
         "exams": "Exams",
-        "myGrades": "My Grades"
+        "myGrades": "My Grades",
+        "manageAdmins": "Manage Admins"
     },
     "auth": {
         "login": "Login",
@@ -181,7 +184,11 @@
             "createCourse": "Create Course",
             "generateReport": "Generate Report",
             "systemSettings": "System Settings"
-        }
+        },
+        "submittedAttendance": "Submitted Attendance",
+        "adminAnnouncements": "Admin Announcements",
+        "createAnnouncement": "Create Announcement"
+
     },
     "blog": {
         "searchPlaceholder": "Search posts...",

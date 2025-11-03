@@ -290,12 +290,12 @@ export default function AdminAnnouncements() {
   return (
     <div className="min-h-screen bg-gray-50">
       <DashboardHero 
-        title="Admin Announcements"
+        title={`${t('admin.adminAnnouncements')}`}
         subtitle="Manage system-wide announcements and communications"
       >
         <Button onClick={openCreateDialog} className="bg-blue-600 hover:bg-blue-700">
           <Plus className="h-4 w-4 mr-2" />
-          Create Announcement
+          {t('admin.createAnnouncement')}
         </Button>
       </DashboardHero>
 

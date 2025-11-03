@@ -12,23 +12,26 @@
         "calendar": "የቀን መቁጠሪያ",
         "userManagement": "የተጠቃሚ አስተዳደር",
         "courseManagement": "የኮርስ አስተዳደር",
+        "courseManagementSubtitle": "ኮርሶችን ማፅደቆችን እና ይዘቶችን ያስተዳድሩ።",
+        "attendance": "አቴንዳስ",
         "events": "ክስተቶች",
         "reports": "ሪፖርቶች",
         "settings": "የስርዓት ቅንብር",
         "myCourses": "የእኔ ኮርሶች",
         "students": "ተማሪዎች",
-        "assignments": "ተግባራት",
+        "assignments": "አሳየመንት",
         "submissions": "ስብስቦች",
-        "announcements": "ማስታወቂያዎች",
+        "announcements": "ማስታወቂያ",
         "materials": "የኮርስ ቁሳቁሶች",
         "certificates": "ማረጋገጫዎች",
         "progress": "እድገት",
         "updates": "አዳዲስ",
         "rulesAndRegulations": "ህጎች እና መመሪያዎች",
-        "grades": "ደረጃዎች",
+        "grades": "ውጤት",
         "analytics": "ትንታኔ",
         "exams": "ፈተናዎች",
-        "myGrades": "የእኔ ደረጃዎች"
+        "myGrades": "የእኔ ደረጃዎች",
+        "manageAdmins": "የአስተዳደር አስተዳደር"
     },
     "auth": {
         "login": "መግባት",
@@ -75,7 +78,7 @@
     "academicPage": {
         "maxStudents": "ከፍተኛ ተማሪዎች:",
         "status": "ሁኔታ:",
-        "active": "ንቁ",
+        "active": "ክፍት",
         "planned": "የታቀደ",
         "ctaTitle": "የአካዳሚያዊ ጉዞዎን ጀምሩ?",
         "ctaSubtitle": "ለመሪነት እና ለአገልግሎት ጥሪዎ የመጀመሪያ ደረጃ ውስጥ ይግቡ።"
@@ -132,7 +135,7 @@
         "title": "የአስተማሪ ዳሽቦርድ",
         "subtitle": "ኮርሶችዎን ያስተዳድሩ እና የተማሪዎችን እድገት ይከታተሉ",
         "stats": {
-            "activeCourses": "ንቁ ኮርሶች",
+            "activeCourses": "ክፍት ኮርሶች",
             "totalStudents": "ጠቅላላ ተማሪዎች",
             "pendingReviews": "የሚጠብቁ ግምገማዎች",
             "avgRating": "አማካይ ደረጃ"
@@ -187,7 +190,7 @@
         "subtitle": "የስርዓት እይታ እና አስተዳደር",
         "systemStats": {
             "totalUsers": "ጠቅላላ ተጠቃሚዎች",
-            "activeCourses": "ንቁ ኮርሶች",
+            "activeCourses": "ክፍት ኮርሶች",
             "completionRate": "የመጨረሻ መጠን",
             "systemHealth": "የስርዓት ጤና",
             "totalEvents": "ጠቅላላ ዝግጅቶች"
@@ -225,7 +228,11 @@
             "createCourse": "ኮርስ ፍጠር (አስተዳዳሪ)",
             "generateReport": "ሪፖርት መፍጠር",
             "systemSettings": "የስርዓት ቅንብር"
-        }
+        },
+        "submittedAttendance": "የገባ አቴንዳስ",
+        "adminAnnouncements": "ማስታወቂያዎች",
+        "createAnnouncement": "ማስታወቂያ ፍጠር"
+
     },
     "blog": {
         "searchPlaceholder": "ፖስቶች አስስ...",
@@ -597,12 +604,12 @@
             "created": "ተፈጠረ"
         },
         "status": {
-            "active": "ንቁ",
-            "inactive": "ባልንቁ"
+            "active": "ክፍት",
+            "inactive": "ተዘግቷል"
         },
         "stats": {
             "totalUsers": "ጠቅላላ ተጠቃሚዎች",
-            "activeUsers": "ንቁ ተጠቃሚዎች",
+            "activeUsers": "ክፍት ተጠቃሚዎች",
             "teachers": "አስተማሪዎች",
             "students": "ተማሪዎች"
         }
@@ -643,7 +650,7 @@
         "title": "የአስተማሪ ዳሽቦርድ",
         "subtitle": "ኮርሶችዎን፣ ተማሪዎችዎን እና የትምህርት እንቅስቃሴዎችዎን አስተዳድር።",
         "stats": {
-            "activeCourses": "ንቁ ኮርሶች",
+            "activeCourses": "ክፍት ኮርሶች",
             "totalStudents": "ጠቅላላ ተማሪዎች",
             "pendingReviews": "ለጥበቃ በጥበቃ",
             "avgRating": "አማካይ ደረጃ"
@@ -794,7 +801,7 @@
             "searchPlaceholder": "ኮርሶችን ፈልግ...",
             "filterByStatus": "በሁኔታ አጣራ",
             "allStatuses": "ሁሉም ሁኔታዎች",
-            "active": "ንቁ",
+            "active": "ክፍት",
             "inactive": "አልተንቀሳቀሰ",
             "sortBy": "በዚህ አይነት አደራጅ",
             "titleAsc": "ርእስ አ-ዘ",
