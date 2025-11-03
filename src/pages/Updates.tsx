@@ -8,11 +8,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Heart, Plus, Edit, Trash2 } from 'lucide-react';
+import { Heart, Plus, Edit, Trash2, Calendar, Clock, MapPin, Download } from 'lucide-react';
 import { useI18n } from '@/contexts/I18nContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { uploadToHygraph } from '@/lib/hygraphUpload';
+import RichTextEditor from '@/components/ui/RichTextEditor';
+import RichTextRenderer from '@/components/ui/RichTextRenderer';
 
 export default function Updates() {
   const { t } = useI18n();
@@ -34,6 +36,16 @@ export default function Updates() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [blogToDelete, setBlogToDelete] = useState<FirestoreBlog | null>(null);
   const [deletingBlog, setDeletingBlog] = useState(false);
+  const [expandedBlogs, setExpandedBlogs] = useState<Record<string, boolean>>({});
+  const [expandedEvents, setExpandedEvents] = useState<Record<string, boolean>>({});
+
+  const toggleBlogExpanded = (blogId: string) => {
+    setExpandedBlogs(prev => ({ ...prev, [blogId]: !prev[blogId] }));
+  };
+
+  const toggleEventExpanded = (eventId: string) => {
+    setExpandedEvents(prev => ({ ...prev, [eventId]: !prev[eventId] }));
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -134,18 +146,20 @@ export default function Updates() {
         imageAssetId = uploadResult.id;
       }
 
+      const content = blogForm.content;
+
       if (editingBlog) {
         await blogService.updateBlogPost(editingBlog.id, {
           title: blogForm.title,
-          content: blogForm.content,
-          imageUrl: imageUrl || undefined,
+          content,
+          ...(imageUrl ? { imageUrl } : { imageUrl: null }),
           ...(imageAssetId ? { imageAssetId } : {}),
         } as any);
         toast.success('Blog post updated');
       } else {
         await blogService.createBlogPost({
           title: blogForm.title,
-          content: blogForm.content,
+          content,
           authorId: currentUser.uid,
           authorName: userProfile.displayName || userProfile.email || 'Unknown Author',
           ...(imageUrl ? { imageUrl } : {}),
@@ -251,7 +265,7 @@ export default function Updates() {
               )}
             </div>
             {loading ? <div className="text-gray-500 text-center">Loading...</div> : (
-              <div className="grid md:grid-cols-2 gap-6">
+              <div className="grid md:grid-cols-2 gap-6 items-start">
                 {filteredBlogs.map(b => (
                   <article key={b.id} className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
                     {/* Featured image */}
@@ -288,7 +302,12 @@ export default function Updates() {
                       )}
                     </div>
                     <h3 className="text-lg font-semibold mt-2 text-gray-900 mb-3">{b.title}</h3>
-                    <p className="text-gray-700 mt-2 line-clamp-3 mb-4">{b.content}</p>
+                                        <RichTextRenderer
+                                          content={b.content}
+                                          truncate={true}
+                                          isExpanded={expandedBlogs[b.id]}
+                                          onToggleExpanded={() => toggleBlogExpanded(b.id)}
+                                        />
                     
                     {/* Love Button */}
                     <div className="flex items-center justify-between pt-3 border-t border-gray-100">
@@ -331,17 +350,56 @@ export default function Updates() {
               </select>
             </div>
             {loading ? <div className="text-gray-500 text-center">Loading...</div> : (
-              <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {filteredEvents.map(ev => (
-                  <div key={ev.id} className="bg-white rounded-lg border p-4 flex items-center justify-between">
-                    <div>
-                      <div className="text-sm text-gray-500">{(ev.date as Timestamp).toDate().toLocaleString()}</div>
-                      <div className="font-semibold text-gray-900">{ev.title}</div>
-                      <div className="text-gray-700">{ev.description}</div>
+                  <div key={ev.id} className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden group border-l-4 border-blue-500">
+                    {ev.imageUrl && (
+                      <div className="h-48 overflow-hidden">
+                        <img src={ev.imageUrl} alt={ev.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                      </div>
+                    )}
+                    <div className="p-6">
+                      <div className="flex items-center text-sm text-gray-600 mb-3">
+                        <Calendar className="w-4 h-4 mr-2 text-blue-500" />
+                        <span>{(ev.date as Timestamp).toDate().toLocaleDateString()}</span>
+                        {ev.time && (
+                          <>
+                            <span className="mx-2 text-gray-300">|</span>
+                            <Clock className="w-4 h-4 mr-1 text-blue-500" />
+                            <span>{ev.time}</span>
+                          </>
+                        )}
+                      </div>
+                      <h3 className="text-xl font-bold text-gray-900 mb-2 group-hover:text-blue-600 transition-colors duration-300">{ev.title}</h3>
+                                            <RichTextRenderer
+                                              content={ev.description}
+                                              truncate={true}
+                                              isExpanded={expandedEvents[ev.id]}
+                                              onToggleExpanded={() => toggleEventExpanded(ev.id)}
+                                            />
+                      {ev.location && (
+                        <div className="flex items-center text-sm text-gray-500">
+                          <MapPin className="w-4 h-4 mr-2 text-gray-400" />
+                          <span className="truncate">{ev.location}</span>
+                        </div>
+                      )}
+                      {ev.fileUrl && (
+                        <div className="mt-4">
+                          <a 
+                            href={ev.fileUrl} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors"
+                          >
+                            <Download className="w-4 h-4" />
+                            Download File
+                          </a>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
-                {!filteredEvents.length && <div className="text-gray-500 text-center py-8">No events match.</div>}
+                {!filteredEvents.length && <div className="text-gray-500 text-center py-8 md:col-span-2">No events match.</div>}
               </div>
             )}
           </TabsContent>
@@ -350,11 +408,10 @@ export default function Updates() {
 
       {/* Blog Dialog */}
       <Dialog open={blogDialogOpen} onOpenChange={setBlogDialogOpen}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto custom-scrollbar space-y-4">
           <DialogHeader>
             <DialogTitle>{editingBlog ? 'Edit Blog Post' : 'Create Blog Post'}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
             <div>
               <Label htmlFor="blog-title">Title</Label>
               <Input
@@ -366,12 +423,9 @@ export default function Updates() {
             </div>
             <div>
               <Label htmlFor="blog-content">Content</Label>
-              <Textarea
-                id="blog-content"
-                value={blogForm.content}
-                onChange={(e) => setBlogForm({ ...blogForm, content: e.target.value })}
-                placeholder="Write your blog post content here..."
-                rows={10}
+              <RichTextEditor
+                content={blogForm.content}
+                onChange={(content) => setBlogForm({ ...blogForm, content })}
               />
             </div>
               <div>
@@ -384,7 +438,6 @@ export default function Updates() {
                   <div className="mt-2 text-xs text-gray-500 break-all">Current image: {blogForm.imageUrl}</div>
                 )}
               </div>
-          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setBlogDialogOpen(false)}>
               Cancel
