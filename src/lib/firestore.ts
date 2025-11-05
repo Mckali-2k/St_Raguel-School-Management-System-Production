@@ -303,10 +303,10 @@ export interface FirestoreEvent {
   type: string;
   time: string;
   location: string;
-  maxAttendees: number;
-  currentAttendees: number;
   status: string;
   isActive: boolean;
+  imageUrl?: string;
+  fileUrl?: string;
 }
 
 export interface FirestoreForumThread {
@@ -353,18 +353,25 @@ const collections = {
 
 // User operations
 export const userService = {
-  async getUsers(limitCount?: number): Promise<FirestoreUser[]> {
-    const q = limitCount
-      ? query(
-          collections.users(),
-          orderBy('createdAt', 'desc'),
-          limit(limitCount)
-        )
-      : query(collections.users(), orderBy('createdAt', 'desc'));
-    const snapshot = await getDocs(q);
-    return snapshot.docs
-      .map(doc => ({ id: doc.id, ...doc.data() } as FirestoreUser))
-      .filter(user => user.isActive !== false); // Client-side filter for isActive
+  async getUsers(limitCount?: number, roles?: FirestoreUser['role'][]): Promise<FirestoreUser[]> {
+    let qRef: any = collections.users();
+
+    if (roles && roles.length > 0) {
+      qRef = query(qRef, where('role', 'in', roles));
+    }
+
+    qRef = query(
+      qRef,
+      orderBy('createdAt', 'desc'),
+      where('isActive', '==', true) // Always filter for active users
+    );
+
+    if (limitCount) {
+      qRef = query(qRef, limit(limitCount));
+    }
+
+    const snapshot = await getDocs(qRef);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreUser));
   },
 
   // Returns users including inactive ones (no filtering by isActive)
@@ -502,15 +509,22 @@ export const userService = {
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreUser));
   },
 
-  async getAllUsersIncludingInactive(limitCount?: number): Promise<FirestoreUser[]> {
-    const q = limitCount
-      ? query(
-          collections.users(),
-          orderBy('createdAt', 'desc'),
-          limit(limitCount)
-        )
-      : query(collections.users(), orderBy('createdAt', 'desc'));
-    const snapshot = await getDocs(q);
+  async getAllUsersIncludingInactive(limitCount?: number, roles?: FirestoreUser['role'][]): Promise<FirestoreUser[]> {
+    let qRef: any = collections.users();
+
+    if (roles && roles.length > 0) {
+      qRef = query(qRef, where('role', 'in', roles));
+    }
+
+    qRef = query(
+      qRef,
+      orderBy('createdAt', 'desc')
+    );
+
+    if (limitCount) {
+      qRef = query(qRef, limit(limitCount));
+    }
+    const snapshot = await getDocs(qRef);
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreUser));
   },
 };
@@ -1720,13 +1734,13 @@ export const eventService = {
       .map(doc => ({ id: doc.id, ...doc.data() } as FirestoreEvent));
   },
 
-  async createEvent(eventData: Omit<FirestoreEvent, 'id'>): Promise<string> {
+  async createEvent(eventData: Omit<FirestoreEvent, 'id' | 'maxAttendees' | 'currentAttendees'>): Promise<string> {
     const docRef = await addDoc(collections.events(), eventData);
     try { await adminActionService.log({ userId: auth.currentUser?.uid || 'unknown', action: 'event.create', targetType: 'event', targetId: docRef.id, details: { title: eventData.title } }); } catch {}
     return docRef.id;
   },
 
-  async updateEvent(eventId: string, updates: Partial<FirestoreEvent>): Promise<void> {
+  async updateEvent(eventId: string, updates: Partial<Omit<FirestoreEvent, 'maxAttendees' | 'currentAttendees'>>): Promise<void> {
     const docRef = doc(db, 'events', eventId);
     await updateDoc(docRef, updates as any);
     try { await adminActionService.log({ userId: auth.currentUser?.uid || 'unknown', action: 'event.update', targetType: 'event', targetId: eventId, details: updates }); } catch {}
@@ -1928,7 +1942,7 @@ export const forumService = {
 export const analyticsService = {
   async getAdminStats() {
     const [usersSnapshot, coursesSnapshot, enrollmentsSnapshot, eventsSnapshot] = await Promise.all([
-      getDocs(collections.users()),
+      getDocs(query(collections.users(), where('role', 'in', ['student', 'teacher']))),
       getDocs(collections.courses()),
       getDocs(collections.enrollments()),
       getDocs(collections.events()),
@@ -1956,6 +1970,42 @@ export const analyticsService = {
       systemHealth: 99.9, // Placeholder
     };
   },
+
+  async getSuperAdminStats() {
+    const [usersSnapshot, coursesSnapshot, enrollmentsSnapshot, eventsSnapshot] = await Promise.all([
+      getDocs(collections.users()),
+      getDocs(collections.courses()),
+      getDocs(collections.enrollments()),
+      getDocs(collections.events()),
+    ]);
+
+    const totalUsers = usersSnapshot.size;
+    const totalStudents = usersSnapshot.docs.filter(doc => doc.data().role === 'student').length;
+    const totalTeachers = usersSnapshot.docs.filter(doc => doc.data().role === 'teacher').length;
+    const totalAdmins = usersSnapshot.docs.filter(doc => doc.data().role === 'admin').length;
+    const totalSuperAdmins = usersSnapshot.docs.filter(doc => doc.data().role === 'super_admin').length;
+    const activeCourses = coursesSnapshot.docs.filter(doc => doc.data().isActive).length;
+    const pendingCourses = coursesSnapshot.docs.filter(doc => !doc.data().isActive).length;
+    const totalEvents = eventsSnapshot.size;
+
+    const totalEnrollments = enrollmentsSnapshot.size;
+    const completedEnrollments = enrollmentsSnapshot.docs.filter(doc => doc.data().status === 'completed').length;
+    const completionRate = totalEnrollments > 0 ? Math.round((completedEnrollments / totalEnrollments) * 100) : 0;
+
+    return {
+      totalUsers,
+      totalStudents,
+      totalTeachers,
+      totalAdmins,
+      totalSuperAdmins,
+      activeCourses,
+      pendingCourses,
+      completionRate,
+      totalEvents,
+      systemHealth: 99.9, // Placeholder
+    };
+  },
+
 
   async getTeacherStats(teacherId: string) {
     const [coursesSnapshot, enrollmentsSnapshot, submissionsSnapshot] = await Promise.all([
