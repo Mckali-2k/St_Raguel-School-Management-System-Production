@@ -13,6 +13,8 @@ import { useI18n } from '@/contexts/I18nContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { uploadToHygraph } from '@/lib/hygraphUpload';
+import RichTextEditor from '@/components/ui/RichTextEditor';
+import RichTextRenderer from '@/components/ui/RichTextRenderer';
 
 export default function Updates() {
   const { t } = useI18n();
@@ -34,6 +36,16 @@ export default function Updates() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [blogToDelete, setBlogToDelete] = useState<FirestoreBlog | null>(null);
   const [deletingBlog, setDeletingBlog] = useState(false);
+  const [expandedBlogs, setExpandedBlogs] = useState<Record<string, boolean>>({});
+  const [expandedEvents, setExpandedEvents] = useState<Record<string, boolean>>({});
+
+  const toggleBlogExpanded = (blogId: string) => {
+    setExpandedBlogs(prev => ({ ...prev, [blogId]: !prev[blogId] }));
+  };
+
+  const toggleEventExpanded = (eventId: string) => {
+    setExpandedEvents(prev => ({ ...prev, [eventId]: !prev[eventId] }));
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -134,18 +146,20 @@ export default function Updates() {
         imageAssetId = uploadResult.id;
       }
 
+      const content = blogForm.content;
+
       if (editingBlog) {
         await blogService.updateBlogPost(editingBlog.id, {
           title: blogForm.title,
-          content: blogForm.content,
-          imageUrl: imageUrl || undefined,
+          content,
+          ...(imageUrl ? { imageUrl } : { imageUrl: null }),
           ...(imageAssetId ? { imageAssetId } : {}),
         } as any);
         toast.success('Blog post updated');
       } else {
         await blogService.createBlogPost({
           title: blogForm.title,
-          content: blogForm.content,
+          content,
           authorId: currentUser.uid,
           authorName: userProfile.displayName || userProfile.email || 'Unknown Author',
           ...(imageUrl ? { imageUrl } : {}),
@@ -288,7 +302,12 @@ export default function Updates() {
                       )}
                     </div>
                     <h3 className="text-lg font-semibold mt-2 text-gray-900 mb-3">{b.title}</h3>
-                    <p className="text-gray-700 mt-2 line-clamp-3 mb-4">{b.content}</p>
+                                        <RichTextRenderer
+                                          content={b.content}
+                                          truncate={true}
+                                          isExpanded={expandedBlogs[b.id]}
+                                          onToggleExpanded={() => toggleBlogExpanded(b.id)}
+                                        />
                     
                     {/* Love Button */}
                     <div className="flex items-center justify-between pt-3 border-t border-gray-100">
@@ -352,7 +371,12 @@ export default function Updates() {
                         )}
                       </div>
                       <h3 className="text-xl font-bold text-gray-900 mb-2 group-hover:text-blue-600 transition-colors duration-300">{ev.title}</h3>
-                      <p className="text-gray-600 text-sm mb-4 line-clamp-3">{ev.description}</p>
+                                            <RichTextRenderer
+                                              content={ev.description}
+                                              truncate={true}
+                                              isExpanded={expandedEvents[ev.id]}
+                                              onToggleExpanded={() => toggleEventExpanded(ev.id)}
+                                            />
                       {ev.location && (
                         <div className="flex items-center text-sm text-gray-500">
                           <MapPin className="w-4 h-4 mr-2 text-gray-400" />
@@ -384,11 +408,10 @@ export default function Updates() {
 
       {/* Blog Dialog */}
       <Dialog open={blogDialogOpen} onOpenChange={setBlogDialogOpen}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto custom-scrollbar space-y-4">
           <DialogHeader>
             <DialogTitle>{editingBlog ? 'Edit Blog Post' : 'Create Blog Post'}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
             <div>
               <Label htmlFor="blog-title">Title</Label>
               <Input
@@ -400,12 +423,9 @@ export default function Updates() {
             </div>
             <div>
               <Label htmlFor="blog-content">Content</Label>
-              <Textarea
-                id="blog-content"
-                value={blogForm.content}
-                onChange={(e) => setBlogForm({ ...blogForm, content: e.target.value })}
-                placeholder="Write your blog post content here..."
-                rows={10}
+              <RichTextEditor
+                content={blogForm.content}
+                onChange={(content) => setBlogForm({ ...blogForm, content })}
               />
             </div>
               <div>
@@ -418,7 +438,6 @@ export default function Updates() {
                   <div className="mt-2 text-xs text-gray-500 break-all">Current image: {blogForm.imageUrl}</div>
                 )}
               </div>
-          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setBlogDialogOpen(false)}>
               Cancel
