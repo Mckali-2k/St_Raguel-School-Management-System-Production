@@ -307,7 +307,9 @@ export interface FirestoreEvent {
   status: string;
   isActive: boolean;
   imageUrl?: string;
+  imageAssetId?: string;
   fileUrl?: string;
+  fileAssetId?: string;
 }
 
 export interface FirestoreForumThread {
@@ -1748,6 +1750,30 @@ export const eventService = {
   },
 
   async deleteEvent(eventId: string): Promise<void> {
+    // First get the event to check for files
+    const eventRef = doc(db, 'events', eventId);
+    const eventSnap = await getDoc(eventRef);
+
+    if (eventSnap.exists()) {
+        const event = eventSnap.data() as FirestoreEvent;
+
+        // Delete associated file from Hygraph BEFORE deleting the document
+        if (event.fileUrl || event.imageUrl) {
+            try {
+                const { deleteDocumentAssets, extractHygraphAssetIds, extractHygraphUrls } = await import('@/lib/hygraphAssetManager');
+                const assetIds = extractHygraphAssetIds(event);
+                const urls = extractHygraphUrls(event);
+                const deletedCount = await deleteDocumentAssets('event', eventId, assetIds, urls);
+                if (deletedCount > 0) {
+                    console.log(`Deleted ${deletedCount} Hygraph asset(s) for event ${eventId}`);
+                }
+            } catch (error) {
+                console.error('Failed to delete event files from Hygraph:', error);
+                // Continue with event deletion even if file deletion fails
+            }
+        }
+    }
+
     const docRef = doc(db, 'events', eventId);
     await deleteDoc(docRef);
     try { await adminActionService.log({ userId: auth.currentUser?.uid || 'unknown', action: 'event.delete', targetType: 'event', targetId: eventId }); } catch {}
@@ -2538,18 +2564,15 @@ export const gradeService = {
       return { letterGrade: 'F', gradePoints: 0 };
     } catch {
       // Fallback to classic mapping if settings unavailable
-      if (finalGradePercent >= 97) return { letterGrade: 'A+', gradePoints: 4.0 };
-      if (finalGradePercent >= 93) return { letterGrade: 'A', gradePoints: 4.0 };
-      if (finalGradePercent >= 90) return { letterGrade: 'A-', gradePoints: 3.7 };
-      if (finalGradePercent >= 87) return { letterGrade: 'B+', gradePoints: 3.3 };
-      if (finalGradePercent >= 83) return { letterGrade: 'B', gradePoints: 3.0 };
-      if (finalGradePercent >= 80) return { letterGrade: 'B-', gradePoints: 2.7 };
-      if (finalGradePercent >= 77) return { letterGrade: 'C+', gradePoints: 2.3 };
-      if (finalGradePercent >= 73) return { letterGrade: 'C', gradePoints: 2.0 };
-      if (finalGradePercent >= 70) return { letterGrade: 'C-', gradePoints: 1.7 };
-      if (finalGradePercent >= 67) return { letterGrade: 'D+', gradePoints: 1.3 };
-      if (finalGradePercent >= 63) return { letterGrade: 'D', gradePoints: 1.0 };
-      if (finalGradePercent >= 60) return { letterGrade: 'D-', gradePoints: 0.7 };
+      if (finalGradePercent >= 95) return { letterGrade: 'A+', gradePoints: 4.0 };
+      if (finalGradePercent >= 85) return { letterGrade: 'A', gradePoints: 4.0 };
+      if (finalGradePercent >= 80) return { letterGrade: 'A-', gradePoints: 3.75 };
+      if (finalGradePercent >= 75) return { letterGrade: 'B+', gradePoints: 3.5 };
+      if (finalGradePercent >= 70) return { letterGrade: 'B', gradePoints: 3.0 };
+      if (finalGradePercent >= 60) return { letterGrade: 'B-', gradePoints: 2.75 };
+      if (finalGradePercent >= 55) return { letterGrade: 'C+', gradePoints: 2.0 };
+      if (finalGradePercent >= 50) return { letterGrade: 'C', gradePoints: 1.5 };
+      if (finalGradePercent >= 40) return { letterGrade: 'D', gradePoints: 1.0 };
       return { letterGrade: 'F', gradePoints: 0.0 };
     }
   },
@@ -2666,19 +2689,16 @@ export const settingsService = {
     const ref = doc(db, 'settings', 'grades');
     const snap = await getDoc(ref);
     const defaults: GradeRangesConfig = {
-      'A+': { min: 97, max: 100, points: 4.0 },
-      'A': { min: 93, max: 96, points: 4.0 },
-      'A-': { min: 90, max: 92, points: 3.7 },
-      'B+': { min: 87, max: 89, points: 3.3 },
-      'B': { min: 83, max: 86, points: 3.0 },
-      'B-': { min: 80, max: 82, points: 2.7 },
-      'C+': { min: 77, max: 79, points: 2.3 },
-      'C': { min: 73, max: 76, points: 2.0 },
-      'C-': { min: 70, max: 72, points: 1.7 },
-      'D+': { min: 67, max: 69, points: 1.3 },
-      'D': { min: 63, max: 66, points: 1.0 },
-      'D-': { min: 60, max: 62, points: 0.7 },
-      'F': { min: 0, max: 59, points: 0.0 },
+          'A+': { min: 95, max: 100, points: 4.0 },
+          'A': { min: 85, max: 94.9, points: 4.0 },
+          'A-': { min: 80, max: 84.9, points: 3.75 },
+          'B+': { min: 75, max: 79.9, points: 3.5 },
+          'B': { min: 70, max: 74.9, points: 3.0 },
+          'B-': { min: 60, max: 69.9, points: 2.75 },
+          'C+': { min: 55, max: 59.9, points: 2 },
+          'C': { min: 50, max: 54.9, points: 1.5 },
+          'D': { min: 40, max: 49.9, points: 1.0 },
+          'F': { min: 0, max: 39.9, points: 0.0 },
     };
     if (!snap.exists()) return defaults;
     const data = snap.data() as any;
