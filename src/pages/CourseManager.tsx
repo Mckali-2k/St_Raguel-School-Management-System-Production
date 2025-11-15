@@ -26,7 +26,6 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
 import DashboardHero from '@/components/DashboardHero';
-import { useI18n } from '@/contexts/I18nContext';
 
 interface CourseWithApproval extends FirestoreCourse {
   needsApproval?: boolean;
@@ -47,6 +46,7 @@ export default function CourseManager() {
   const [enrollTab, setEnrollTab] = useState<'manual'|'csv'>('manual');
   const [selectedCourseForEnroll, setSelectedCourseForEnroll] = useState<CourseWithApproval | null>(null);
   const [studentQuery, setStudentQuery] = useState('');
+  const [yearFilter, setYearFilter] = useState('');
   const [foundStudents, setFoundStudents] = useState<any[]>([]);
   const [csvText, setCsvText] = useState('');
   const [showUnenrollDialog, setShowUnenrollDialog] = useState(false);
@@ -80,13 +80,12 @@ export default function CourseManager() {
   const [importingCsv, setImportingCsv] = useState(false);
   const [unenrollingId, setUnenrollingId] = useState<string | null>(null);
   const [deletingCourseId, setDeletingCourseId] = useState<string | null>(null);
+  const [enrolledStudentIds, setEnrolledStudentIds] = useState<string[]>([]);
 
   // Calculate stats
   const totalCourses = courses.length;
   const activeCourses = courses.filter(c => c.isActive).length;
   const totalStudents = totalEnrolledStudents;
-  const { t } = useI18n();
-
 
   const navigate = useNavigate();
 
@@ -150,13 +149,22 @@ export default function CourseManager() {
     setShowCourseDialog(true);
   };
 
-  const openEnroll = (course: CourseWithApproval) => {
+  const openEnroll = async (course: CourseWithApproval) => {
     setSelectedCourseForEnroll(course);
     setEnrollTab('manual');
     setStudentQuery('');
     setFoundStudents([]);
     setCsvText('');
     setShowEnrollDialog(true);
+
+    try {
+      const enrollments = await enrollmentService.getEnrollmentsByCourse(course.id);
+      const studentIds = enrollments.map(e => e.studentId);
+      setEnrolledStudentIds(studentIds);
+    } catch (error) {
+      console.error('Error fetching enrolled students:', error);
+      toast.error('Failed to load enrolled students');
+    }
   };
 
   const openUnenroll = async (course: CourseWithApproval) => {
@@ -230,13 +238,14 @@ export default function CourseManager() {
         const matchesSearch = (u.displayName||'').toLowerCase().includes(q) || 
                              (u.email||'').toLowerCase().includes(q) || 
                              (u.id||'').toLowerCase().includes(q);
+        const matchesYear = yearFilter ? u.year === yearFilter : true;
         
-        return isStudent && isNotCurrentUser && matchesSearch;
+        return isStudent && isNotCurrentUser && matchesSearch && matchesYear;
       }).slice(0, 10);
       
       setFoundStudents(studentsOnly);
       
-      if (studentsOnly.length === 0 && q.length > 0) {
+      if (studentsOnly.length === 0 && (q.length > 0 || yearFilter)) {
         toast.info('No students found matching your search criteria.');
       }
     } catch (error) {
@@ -557,8 +566,8 @@ export default function CourseManager() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-green-50">
       <DashboardHero 
-        title={`${t('nav.courseManagement')}`}
-        subtitle={t('nav.courseManagementSubtitle')}
+        title="Course Management"
+        subtitle="Manage courses, approvals, and content."
       >
         {userProfile?.role === 'admin' && (
             <div className="mt-4 lg:mt-0">
@@ -1029,18 +1038,37 @@ export default function CourseManager() {
                   <Label>Search student (name/email/id)</Label>
                   <div className="flex gap-2">
                     <Input value={studentQuery} onChange={(e) => setStudentQuery(e.target.value)} placeholder="john@school.edu or user id" />
+                    <Select value={yearFilter} onValueChange={(value) => setYearFilter(value === '__ALL__' ? '' : value)}>
+                      <SelectTrigger className="w-[180px]">
+                        <SelectValue placeholder="Filter by Year" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__ALL__">All Years</SelectItem>
+                        <SelectItem value="1st Year">1st Year</SelectItem>
+                        <SelectItem value="2nd Year">2nd Year</SelectItem>
+                        <SelectItem value="3rd Year">3rd Year</SelectItem>
+                        <SelectItem value="4th Year">4th Year</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <Button onClick={searchStudents}>Search</Button>
                   </div>
-                  <div className="space-y-2 max-h-64 overflow-auto">
-                    {foundStudents.map(s => (
-                      <div key={s.id} className="flex items-center justify-between p-2 border rounded">
-                        <div>
-                          <div className="font-medium">{s.displayName}</div>
-                          <div className="text-xs text-gray-500">{s.email}</div>
+                  <div className="space-y-2 max-h-80 overflow-auto">
+                    {foundStudents.map(s => {
+                      const isEnrolled = enrolledStudentIds.includes(s.uid || s.id);
+                      return (
+                        <div key={s.id} className="flex items-center justify-between p-2 border rounded">
+                          <div>
+                            <div className="font-medium">{s.displayName}</div>
+                            <div className="text-xs text-gray-500">{s.email}</div>
+                          </div>
+                          {isEnrolled ? (
+                            <Badge variant="secondary">Enrolled</Badge>
+                          ) : (
+                            <Button size="sm" onClick={() => enrollStudent(s.uid || s.id)}>Enroll</Button>
+                          )}
                         </div>
-                        <Button size="sm" onClick={() => enrollStudent(s.uid || s.id)}>Enroll</Button>
-                      </div>
-                    ))}
+                      );
+                    })}
                     {foundStudents.length === 0 && (<div className="text-sm text-gray-500">No results</div>)}
                   </div>
                 </div>
@@ -1231,7 +1259,7 @@ export default function CourseManager() {
             </DialogHeader>
             <div className="space-y-4">
               <p className="text-gray-600">Select students to remove from this course:</p>
-              <div className="max-h-96 overflow-y-auto space-y-2 scrollbar-thin">
+              <div className="max-h-[500px] overflow-y-auto space-y-2 scrollbar-thin">
                 {enrolledStudents.map((enrollment) => (
                   <div key={enrollment.id} className="flex items-center justify-between p-3 border rounded-lg">
                     <div>
