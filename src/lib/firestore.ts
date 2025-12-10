@@ -27,6 +27,7 @@ export { Timestamp };
 export interface FirestoreUser {
   uid?: string; // Optional for backward compatibility
   id?: string;  // Document ID
+  studentId?: string; // New field for student ID
   displayName: string;
   email: string;
   role: 'student' | 'teacher' | 'admin' | 'super_admin';
@@ -414,6 +415,11 @@ export const userService = {
       return { id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as FirestoreUser;
     }
     return null;
+  },
+
+  async checkUserExistsByEmail(email: string): Promise<boolean> {
+    const user = await this.getUserByEmail(email);
+    return user !== null;
   },
 
   async getUsersByIds(uids: string[]): Promise<Record<string, FirestoreUser | null>> {
@@ -1116,6 +1122,20 @@ export const announcementService = {
       createdAt: now,
     });
     try { await adminActionService.log({ userId: auth.currentUser?.uid || 'unknown', action: 'announcement.create', targetType: 'announcement', targetId: docRef.id, details: { courseId: announcementData.courseId, title: announcementData.title } }); } catch {}
+    
+    // Send email to students
+    try {
+      await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/email/announcement`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ announcement: { id: docRef.id, ...announcementData, createdAt: now.toDate().toISOString() } }),
+      });
+    } catch (error) {
+      console.error('Failed to send announcement email:', error);
+    }
+
     return docRef.id;
   },
 
