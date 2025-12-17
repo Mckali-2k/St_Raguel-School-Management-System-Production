@@ -25,6 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
+import { toEthiopianDate } from '../lib/ethiopianCalendar';
 import DashboardHero from '@/components/DashboardHero';
 
 interface CourseWithApproval extends FirestoreCourse {
@@ -62,15 +63,17 @@ export default function CourseManager() {
     description: '',
     category: '',
     duration: 8,
-    maxStudents: 30,
+    maxStudents: 30 as any,
     syllabus: '',
-    isActive: false,
-    prerequisite: '',
-    credit: 0,
-    year: 0,
+    isActive: userProfile?.role === 'admin',
+    year: toEthiopianDate(new Date()).year,
+    semester: '',
+    studentsYear: '',
   });
   const [teachers, setTeachers] = useState<any[]>([]);
   const [selectedInstructor, setSelectedInstructor] = useState<string>('');
+  const [customStudentsYear, setCustomStudentsYear] = useState('');
+  const [showCustomStudentsYear, setShowCustomStudentsYear] = useState(false);
 
   // Loading states for async button actions
   const [savingEdit, setSavingEdit] = useState(false);
@@ -133,7 +136,7 @@ export default function CourseManager() {
   const handleDeleteCourse = async (courseId: string) => {
     try {
       setDeletingCourseId(courseId);
-      await courseService.deleteCourse(courseId);
+      await courseService.deleteCourseWithDependencies(courseId);
       toast.success('Course deleted');
       loadCourses();
     } catch (error) {
@@ -268,9 +271,8 @@ export default function CourseManager() {
     
     try {
       setEnrollingUserId(studentId);
-      // Optimistically prevent duplicate enroll button spam
-      const already = enrolledStudents.some((e) => e.studentId === studentId);
-      if (already) {
+      // Use the correct state to check for enrollment
+      if (enrolledStudentIds.includes(studentId)) {
         toast.info('This student is already enrolled in this course.');
         return;
       }
@@ -283,26 +285,13 @@ export default function CourseManager() {
       } as any);
       toast.success('Student enrolled successfully');
       
+      // Update the enrolled student IDs for the current dialog
+      setEnrolledStudentIds(prev => [...prev, studentId]);
+
       // Clear search results after successful enrollment
       setFoundStudents([]);
       setStudentQuery('');
-      // Refresh enrolled students list if dialog is open
-      try {
-        if (selectedCourseForEnroll) {
-          const enrollments = await enrollmentService.getEnrollmentsByCourse(selectedCourseForEnroll.id);
-          const studentsWithDetails = await Promise.all(
-            enrollments.map(async (enrollment: any) => {
-              try {
-                const user = await userService.getUserById(enrollment.studentId);
-                return { ...enrollment, user };
-              } catch {
-                return { ...enrollment, user: { displayName: 'Unknown User', email: enrollment.studentId } };
-              }
-            })
-          );
-          setEnrolledStudents(studentsWithDetails);
-        }
-      } catch {}
+      
     } catch (error) {
       console.error('Error enrolling student:', error);
       if (error instanceof Error) {
@@ -415,6 +404,14 @@ export default function CourseManager() {
       toast.error('Syllabus is required');
       return;
     }
+    if (!editForm.year || Number(editForm.year) < 1900 || Number(editForm.year) > new Date().getFullYear() + 1) {
+      toast.error('Offering Year must be a valid year (e.g., 1900 to current year + 1)');
+      return;
+    }
+    if (!editForm.semester) {
+      toast.error('Semester is required');
+      return;
+    }
     if (!editForm.instructor) {
       toast.error('Please select an instructor');
       return;
@@ -441,6 +438,8 @@ export default function CourseManager() {
         prerequisite: editForm.prerequisite,
         credit: editForm.credit,
         year: editForm.year,
+        semester: editForm.semester,
+        studentsYear: editForm.studentsYear,
       } as Partial<FirestoreCourse>);
       toast.success('Course updated');
       setIsEditOpen(false);
@@ -453,10 +452,32 @@ export default function CourseManager() {
     }
   };
 
+  const handleEditStudentsYearChange = (value: string) => {
+    if (value === 'custom') {
+      setShowCustomStudentsYear(true);
+      setEditForm({ ...editForm, studentsYear: '' });
+    } else {
+      setShowCustomStudentsYear(false);
+      setCustomStudentsYear('');
+      setEditForm({ ...editForm, studentsYear: value });
+    }
+  };
+
+  const handleStudentsYearChange = (value: string) => {
+    if (value === 'custom') {
+      setShowCustomStudentsYear(true);
+      setCreateForm({ ...createForm, studentsYear: '' });
+    } else {
+      setShowCustomStudentsYear(false);
+      setCustomStudentsYear('');
+      setCreateForm({ ...createForm, studentsYear: value });
+    }
+  };
+
   const startCreate = () => {
     setCreateForm({
-      title: '', description: '', category: '', duration: 8 as any, maxStudents: 30 as any, syllabus: '', isActive: userProfile?.role === 'admin',
-    } as any);
+      title: '', description: '', category: '', duration: 8 as any, maxStudents: 30 as any, syllabus: '', isActive: userProfile?.role === 'admin', year: toEthiopianDate(new Date()).year, semester: ''
+    });
     setSelectedInstructor('');
     setCreateStep(1);
     setIsCreateOpen(true);
@@ -500,6 +521,14 @@ export default function CourseManager() {
         toast.error('Syllabus is required');
         return;
       }
+      if (!createForm.year || Number(createForm.year) < 1900 || Number(createForm.year) > new Date().getFullYear() + 1) {
+        toast.error('Offering Year must be a valid year (e.g., 1900 to current year + 1)');
+        return;
+      }
+      if (!createForm.semester) {
+        toast.error('Semester is required');
+        return;
+      }
       if (!selectedInstructor) {
         toast.error('Please select an instructor');
         return;
@@ -511,8 +540,17 @@ export default function CourseManager() {
         return;
       }
 
+      // Generate composite title
+      const originalTitle = String(createForm.title || '');
+      const ethiopianYear = Number(createForm.year || toEthiopianDate(new Date()).year);
+      
+      const semester = String(createForm.semester || '');
+      const semesterAbbreviation = semester.replace(' ', '').replace('Semester', 'S').replace('Trimester', 'T');
+
+      const compositeTitle = `${originalTitle}-${ethiopianYear}-${semesterAbbreviation}`;
+
       await courseService.createCourse({
-        title: String(createForm.title || ''),
+        title: compositeTitle,
         description: String(createForm.description || ''),
         category: String(createForm.category || ''),
         duration: Number(createForm.duration || 1),
@@ -524,6 +562,8 @@ export default function CourseManager() {
         prerequisite: String(createForm.prerequisite || ''),
         credit: Number(createForm.credit || 0),
         year: Number(createForm.year || 0),
+        semester: String(createForm.semester || ''),
+        studentsYear: createForm.studentsYear || '',
       } as any);
       toast.success('Course created');
       setIsCreateOpen(false);
@@ -697,6 +737,10 @@ export default function CourseManager() {
 
                           </span>
                           <span className="flex items-center gap-1">
+                            <Clock className="h-4 w-4" />
+                            <span className="truncate max-w-[80px]">{course.semester}</span>
+                          </span>
+                          <span className="flex items-center gap-1">
                             <TrendingUp className="h-4 w-4" />
                             {course.duration}h
                           </span>
@@ -840,8 +884,16 @@ export default function CourseManager() {
                   <p className="text-gray-600">{selectedCourse.credit}</p>
                 </div>
                 <div>
-                  <span className="font-medium text-gray-700">Year:</span>
+                  <span className="font-medium text-gray-700">Offering Year:</span>
                   <p className="text-gray-600">{selectedCourse.year}</p>
+                </div>
+                <div>
+                  <span className="font-medium text-gray-700">Students Year:</span>
+                  <p className="text-gray-600">{selectedCourse.studentsYear}</p>
+                </div>
+                <div>
+                  <span className="font-medium text-gray-700">Semester:</span>
+                  <p className="text-gray-600">{selectedCourse.semester}</p>
                 </div>
                 <div>
                   <span className="font-medium text-gray-700">Prerequisite:</span>
@@ -935,7 +987,7 @@ export default function CourseManager() {
               />
             </div>
             <div>
-              <Label htmlFor="year">Year</Label>
+              <Label htmlFor="year">Offering Year</Label>
               <Input 
                 id="year" 
                 type="text" 
@@ -946,8 +998,60 @@ export default function CourseManager() {
                     setEditForm({ ...editForm, year: value as any });
                   }
                 }}
-                placeholder="Enter year of students taking the course"
+                placeholder="e.g., 2025"
               />
+            </div>
+            <div>
+              <Label htmlFor="studentsYear">Students Year</Label>
+              <Select value={editForm.studentsYear || ''} onValueChange={handleEditStudentsYearChange}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a year" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1st Year">1st Year</SelectItem>
+                  <SelectItem value="2nd Year">2nd Year</SelectItem>
+                  <SelectItem value="3rd Year">3rd Year</SelectItem>
+                  <SelectItem value="4th Year">4th Year</SelectItem>
+                  <SelectItem value="custom">Custom Year...</SelectItem>
+                </SelectContent>
+              </Select>
+              {showCustomStudentsYear && (
+                <div className="mt-2 flex gap-2">
+                  <Input
+                    placeholder="Enter custom year"
+                    value={customStudentsYear}
+                    onChange={(e) => setCustomStudentsYear(e.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => {
+                      if (customStudentsYear.trim()) {
+                        setEditForm({ ...editForm, studentsYear: customStudentsYear.trim() });
+                        setShowCustomStudentsYear(false);
+                      }
+                    }}
+                    disabled={!customStudentsYear.trim()}
+                  >
+                    Add
+                  </Button>
+                </div>
+              )}
+            </div>
+            <div>
+              <Label htmlFor="semester">Semester</Label>
+              <Select value={editForm.semester || ''} onValueChange={(value) => setEditForm({ ...editForm, semester: value })}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a semester" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Semester 1">Semester 1</SelectItem>
+                  <SelectItem value="Semester 2">Semester 2</SelectItem>
+                  <SelectItem value="Trimester 1">Trimester 1</SelectItem>
+                  <SelectItem value="Trimester 2">Trimester 2</SelectItem>
+                  <SelectItem value="Trimester 3">Trimester 3</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label htmlFor="prerequisite">Prerequisite</Label>
@@ -1115,6 +1219,35 @@ export default function CourseManager() {
                     <p className="text-xs text-gray-500 mt-1">{(createForm.category || '').length}/50 characters</p>
                   </div>
                   <div>
+                    <Label>Offering Year</Label>
+                    <Input 
+                      type="text" 
+                      value={createForm.year || ''} 
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === '' || /^\d+$/.test(value)) {
+                          setCreateForm({ ...createForm, year: value as any } as any);
+                        }
+                      }}
+                      placeholder="e.g., 2025"
+                    />
+                  </div>
+                  <div>
+                    <Label>Semester</Label>
+                    <Select value={createForm.semester || ''} onValueChange={(value) => setCreateForm({ ...createForm, semester: value })}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a semester" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Semester 1">Semester 1</SelectItem>
+                        <SelectItem value="Semester 2">Semester 2</SelectItem>
+                        <SelectItem value="Trimester 1">Trimester 1</SelectItem>
+                        <SelectItem value="Trimester 2">Trimester 2</SelectItem>
+                        <SelectItem value="Trimester 3">Trimester 3</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
                     <Label>Description</Label>
                     <Textarea 
                       value={String(createForm.description || '')} 
@@ -1154,6 +1287,43 @@ export default function CourseManager() {
                       }}
                       placeholder="Enter maximum number of students"
                     />
+                  </div>
+                  <div>
+                    <Label>Students Year</Label>
+                    <Select value={createForm.studentsYear || ''} onValueChange={handleStudentsYearChange}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a year" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1st Year">1st Year</SelectItem>
+                        <SelectItem value="2nd Year">2nd Year</SelectItem>
+                        <SelectItem value="3rd Year">3rd Year</SelectItem>
+                        <SelectItem value="4th Year">4th Year</SelectItem>
+                        <SelectItem value="custom">Custom Year...</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {showCustomStudentsYear && (
+                      <div className="mt-2 flex gap-2">
+                        <Input
+                          placeholder="Enter custom year"
+                          value={customStudentsYear}
+                          onChange={(e) => setCustomStudentsYear(e.target.value)}
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            if (customStudentsYear.trim()) {
+                              setCreateForm({ ...createForm, studentsYear: customStudentsYear.trim() });
+                              setShowCustomStudentsYear(false);
+                            }
+                          }}
+                          disabled={!customStudentsYear.trim()}
+                        >
+                          Add
+                        </Button>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <Label>Instructor</Label>
@@ -1198,20 +1368,7 @@ export default function CourseManager() {
                       placeholder="Enter course credit"
                     />
                   </div>
-                  <div>
-                    <Label>Year</Label>
-                    <Input 
-                      type="text" 
-                      value={createForm.year || ''} 
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        if (value === '' || /^\d+$/.test(value)) {
-                          setCreateForm({ ...createForm, year: value as any } as any);
-                        }
-                      }}
-                      placeholder="Enter year of students taking the course"
-                    />
-                  </div>
+
                   <div>
                     <Label>Prerequisite</Label>
                     <Input 
